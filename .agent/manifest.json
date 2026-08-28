@@ -1,0 +1,16 @@
+{
+  "name": "fx_system_agent",
+  "version": "2.0.0",
+  "description": "Autonomous Forex Execution & Telemetry Agent Architecture",
+  "rules": [
+    "rules/01_system_blueprint.md",
+    "rules/02_security_guardrails.md"
+  ],
+  "skills": [
+    "skills/self_learning_wfa",
+    "skills/ctrader_fix_bridge"
+  ],
+  "workflows": [
+    "workflows/goal.md"
+  ]
+}
