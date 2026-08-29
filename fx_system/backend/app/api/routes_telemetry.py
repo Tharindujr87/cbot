@@ -1,4 +1,6 @@
 import os
+import psycopg2
+import psycopg2.extras
 from datetime import datetime, timezone
 from typing import List
 from fastapi import APIRouter
@@ -8,45 +10,57 @@ from ..services.wfa_engine import wfa_engine_service
 
 router = APIRouter(prefix="/api/telemetry", tags=["Telemetry & Performance"])
 
-# Mock recent trade data for fast startup / dashboard display
-MOCK_TRADES: List[TradeLogModel] = [
-    TradeLogModel(
-        ticket_id="CT-94821",
-        symbol="EURUSD",
-        trade_type="BUY",
-        entry_price=1.08450,
-        exit_price=1.08720,
-        stop_loss=1.08380,
-        take_profit=1.08720,
-        volume_units=100000.0,
-        pnl=270.00,
-        commission=-3.50,
-        swap=0.00,
-        slippage_pips=0.1,
-        status="CLOSED_TP",
-        fsm_state_at_entry="FVG_LIMIT_FILLED",
-        open_time_utc=datetime.now(timezone.utc),
-        close_time_utc=datetime.now(timezone.utc)
-    ),
-    TradeLogModel(
-        ticket_id="CT-94822",
-        symbol="EURUSD",
-        trade_type="SELL",
-        entry_price=1.08820,
-        exit_price=1.08640,
-        stop_loss=1.08900,
-        take_profit=1.08640,
-        volume_units=100000.0,
-        pnl=180.00,
-        commission=-3.50,
-        swap=0.00,
-        slippage_pips=0.2,
-        status="CLOSED_TP",
-        fsm_state_at_entry="FVG_LIMIT_FILLED",
-        open_time_utc=datetime.now(timezone.utc),
-        close_time_utc=datetime.now(timezone.utc)
-    )
-]
+def query_real_trades_from_db() -> List[TradeLogModel]:
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        return []
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("""
+            SELECT ticket_id, symbol, trade_type, 
+                   COALESCE(entry_price, 0.0) as entry_price, 
+                   COALESCE(exit_price, entry_price) as exit_price,
+                   COALESCE(stop_loss, 0.0) as stop_loss, 
+                   COALESCE(take_profit, 0.0) as take_profit, 
+                   COALESCE(volume_units, 0.0) as volume_units, 
+                   COALESCE(pnl, 0.0) as pnl, 
+                   COALESCE(commission, 0.0) as commission, 
+                   COALESCE(swap, 0.0) as swap, 
+                   COALESCE(slippage_pips, 0.0) as slippage_pips, 
+                   status, fsm_state_at_entry, open_time_utc, close_time_utc
+            FROM trade_logs
+            ORDER BY open_time_utc DESC
+            LIMIT 50;
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        trades = []
+        for r in rows:
+            trades.append(TradeLogModel(
+                ticket_id=str(r["ticket_id"]),
+                symbol=str(r["symbol"]),
+                trade_type=str(r["trade_type"]),
+                entry_price=float(r["entry_price"]),
+                exit_price=float(r["exit_price"]) if r["exit_price"] is not None else None,
+                stop_loss=float(r["stop_loss"]),
+                take_profit=float(r["take_profit"]),
+                volume_units=float(r["volume_units"]),
+                pnl=float(r["pnl"]),
+                commission=float(r["commission"]),
+                swap=float(r["swap"]),
+                slippage_pips=float(r["slippage_pips"]),
+                status=str(r["status"]),
+                fsm_state_at_entry=r["fsm_state_at_entry"],
+                open_time_utc=r["open_time_utc"],
+                close_time_utc=r["close_time_utc"]
+            ))
+        return trades
+    except Exception as e:
+        print(f"[DB Query Error] {e}")
+        return []
 
 @router.get("/tick", response_model=TelemetryTickModel)
 def get_latest_telemetry_tick():
@@ -54,7 +68,7 @@ def get_latest_telemetry_tick():
 
 @router.get("/trades", response_model=List[TradeLogModel])
 def get_trade_logs():
-    return MOCK_TRADES
+    return query_real_trades_from_db()
 
 @router.post("/wfa/trigger", response_model=WfaRunResult)
 def trigger_wfa_optimization():

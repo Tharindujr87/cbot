@@ -35,41 +35,14 @@ export default function App() {
     emergency_kill_active: false
   });
 
-  const [trades, setTrades] = useState([
-    {
-      ticket_id: "CT-94821",
-      symbol: "EURUSD",
-      trade_type: "BUY",
-      entry_price: 1.08450,
-      exit_price: 1.08720,
-      stop_loss: 1.08380,
-      take_profit: 1.08720,
-      volume_units: 100000.0,
-      pnl: 270.00,
-      slippage_pips: 0.1,
-      status: "CLOSED_TP"
-    },
-    {
-      ticket_id: "CT-94822",
-      symbol: "EURUSD",
-      trade_type: "SELL",
-      entry_price: 1.08820,
-      exit_price: 1.08640,
-      stop_loss: 1.08900,
-      take_profit: 1.08640,
-      volume_units: 100000.0,
-      pnl: 180.00,
-      slippage_pips: 0.2,
-      status: "CLOSED_TP"
-    }
-  ]);
+  const [trades, setTrades] = useState([]);
 
   const [aiAnalysis, setAiAnalysis] = useState({
-    macro_regime: "NEUTRAL_TO_BULLISH",
+    macro_regime: "NEUTRAL",
     volatility_index: "MODERATE",
     high_impact_news_risk: "LOW",
-    structural_health_score: 88,
-    summary: "EUR/USD is consolidating above the Asian range low. Liquidity sweeps at London open showed rapid rejection. Market structure shift on 1M suggests strong demand with clean Fair Value Gaps."
+    structural_health_score: 75,
+    summary: "Connecting to live OpenAI ChatGPT macro advisory service for institutional order flow analysis..."
   });
 
   const [wfaResult, setWfaResult] = useState(null);
@@ -77,11 +50,36 @@ export default function App() {
   const [showKillModal, setShowKillModal] = useState(false);
   const [statusMessage, setStatusMessage] = useState({ text: "", type: "" });
 
-  // Connect to backend WebSocket or fallback polling
+  const fetchLiveTelemetry = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/telemetry/tick`);
+      if (res.ok) {
+        const data = await res.json();
+        setTelemetry(prev => ({ ...prev, ...data }));
+      }
+    } catch (e) {}
+  };
+
+  const fetchLiveTrades = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/telemetry/trades`);
+      if (res.ok) {
+        const data = await res.json();
+        setTrades(data);
+      }
+    } catch (e) {}
+  };
+
+  // Connect to backend WebSocket and periodic real API polling
   useEffect(() => {
+    fetchLiveTelemetry();
+    fetchLiveTrades();
+
     let ws = null;
     try {
-      ws = new WebSocket(`ws://127.0.0.1:8000/ws/telemetry`);
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsHost = window.location.hostname === "localhost" ? "127.0.0.1:8000" : window.location.host;
+      ws = new WebSocket(`${wsProtocol}//${wsHost}/ws/telemetry`);
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "TELEMETRY_UPDATE" || msg.type === "INITIAL_STATE") {
@@ -89,18 +87,13 @@ export default function App() {
         }
       };
     } catch (e) {
-      console.log("WebSocket fallback to periodic tick simulation");
+      console.log("WebSocket connecting via REST fallback");
     }
 
     const interval = setInterval(() => {
-      // Small simulated pulse if disconnected
-      setTelemetry(prev => ({
-        ...prev,
-        bid: Number((prev.bid + (Math.random() * 0.00004 - 0.00002)).toFixed(5)),
-        ask: Number((prev.bid + 0.00007).toFixed(5)),
-        timestamp_utc: new Date().toISOString()
-      }));
-    }, 2000);
+      fetchLiveTelemetry();
+      fetchLiveTrades();
+    }, 3000);
 
     return () => {
       if (ws) ws.close();
@@ -502,48 +495,52 @@ export default function App() {
         </div>
 
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border-color)", textAlign: "left", color: "var(--text-muted)" }}>
-                <th style={{ padding: "10px" }}>TICKET</th>
-                <th style={{ padding: "10px" }}>TYPE</th>
-                <th style={{ padding: "10px" }}>ENTRY</th>
-                <th style={{ padding: "10px" }}>EXIT</th>
-                <th style={{ padding: "10px" }}>SL</th>
-                <th style={{ padding: "10px" }}>TP</th>
-                <th style={{ padding: "10px" }}>SLIPPAGE</th>
-                <th style={{ padding: "10px" }}>PNL</th>
-                <th style={{ padding: "10px" }}>STATUS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((t, idx) => (
-                <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                  <td className="mono" style={{ padding: "12px 10px", fontWeight: 600 }}>{t.ticket_id}</td>
-                  <td style={{ padding: "12px 10px" }}>
-                    <span style={{ 
-                      padding: "3px 8px", borderRadius: "4px", fontSize: "0.75rem", fontWeight: 700,
-                      background: t.trade_type === "BUY" ? "rgba(16, 185, 129, 0.2)" : "rgba(244, 63, 94, 0.2)",
-                      color: t.trade_type === "BUY" ? "#34d399" : "#fb7185"
-                    }}>
-                      {t.trade_type}
-                    </span>
-                  </td>
-                  <td className="mono" style={{ padding: "12px 10px" }}>{t.entry_price.toFixed(5)}</td>
-                  <td className="mono" style={{ padding: "12px 10px" }}>{t.exit_price.toFixed(5)}</td>
-                  <td className="mono" style={{ padding: "12px 10px", color: "#fb7185" }}>{t.stop_loss.toFixed(5)}</td>
-                  <td className="mono" style={{ padding: "12px 10px", color: "#34d399" }}>{t.take_profit.toFixed(5)}</td>
-                  <td className="mono" style={{ padding: "12px 10px", color: "var(--text-muted)" }}>{t.slippage_pips} pips</td>
-                  <td className="mono" style={{ padding: "12px 10px", fontWeight: 700, color: t.pnl >= 0 ? "#34d399" : "#fb7185" }}>
-                    +${t.pnl.toFixed(2)}
-                  </td>
-                  <td style={{ padding: "12px 10px" }}>
-                    <span className="badge badge-online">{t.status}</span>
-                  </td>
+          {trades.length === 0 ? (
+            <div style={{ padding: "32px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+              No trade executions recorded yet on this account. Bot engine is on active standby.
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border-color)", textAlign: "left", color: "var(--text-muted)" }}>
+                  <th style={{ padding: "10px" }}>TICKET</th>
+                  <th style={{ padding: "10px" }}>TYPE</th>
+                  <th style={{ padding: "10px" }}>ENTRY</th>
+                  <th style={{ padding: "10px" }}>EXIT</th>
+                  <th style={{ padding: "10px" }}>VOLUME</th>
+                  <th style={{ padding: "10px" }}>SLIPPAGE</th>
+                  <th style={{ padding: "10px" }}>PNL</th>
+                  <th style={{ padding: "10px" }}>STATUS</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {trades.map((t, idx) => (
+                  <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                    <td className="mono" style={{ padding: "12px 10px", fontWeight: 600 }}>{t.ticket_id}</td>
+                    <td style={{ padding: "12px 10px" }}>
+                      <span style={{ 
+                        padding: "3px 8px", borderRadius: "4px", fontSize: "0.75rem", fontWeight: 700,
+                        background: t.trade_type === "BUY" ? "rgba(16, 185, 129, 0.2)" : "rgba(244, 63, 94, 0.2)",
+                        color: t.trade_type === "BUY" ? "#34d399" : "#fb7185"
+                      }}>
+                        {t.trade_type}
+                      </span>
+                    </td>
+                    <td className="mono" style={{ padding: "12px 10px" }}>{t.entry_price ? Number(t.entry_price).toFixed(5) : '-'}</td>
+                    <td className="mono" style={{ padding: "12px 10px" }}>{t.exit_price ? Number(t.exit_price).toFixed(5) : '-'}</td>
+                    <td className="mono" style={{ padding: "12px 10px" }}>{t.volume_units ? Number(t.volume_units).toLocaleString() : '-'}</td>
+                    <td className="mono" style={{ padding: "12px 10px", color: "var(--text-muted)" }}>{t.slippage_pips || 0.0} pips</td>
+                    <td className="mono" style={{ padding: "12px 10px", fontWeight: 700, color: (t.pnl || 0) >= 0 ? "#34d399" : "#fb7185" }}>
+                      {(t.pnl || 0) >= 0 ? `+$${Number(t.pnl || 0).toFixed(2)}` : `-$${Math.abs(Number(t.pnl || 0)).toFixed(2)}`}
+                    </td>
+                    <td style={{ padding: "12px 10px" }}>
+                      <span className="badge badge-online">{t.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 

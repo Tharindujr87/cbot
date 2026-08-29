@@ -88,8 +88,16 @@ class HeadlessExecutionEngine:
             res = ProtoOAReconcileRes()
             res.ParseFromString(message.payload)
             print(f"[cTrader Open API] Reconcile: {len(res.position)} open positions, {len(res.order)} pending orders.")
+            self.fetch_deals()
 
-        # 5. Symbols List Response
+        # 5. Deal List Response (Historical Real Trades)
+        elif payload_type == ProtoOADealListRes().payloadType:
+            res = ProtoOADealListRes()
+            res.ParseFromString(message.payload)
+            print(f"[cTrader Open API] Received {len(res.deal)} real deals from Pepperstone. Syncing to database...")
+            self.sync_deals_to_db(res.deal)
+
+        # 6. Symbols List Response
         elif payload_type == ProtoOASymbolsListRes().payloadType:
             res = ProtoOASymbolsListRes()
             res.ParseFromString(message.payload)
@@ -131,6 +139,54 @@ class HeadlessExecutionEngine:
         req_rec = ProtoOAReconcileReq()
         req_rec.ctidTraderAccountId = self.account_id
         self.client.send(req_rec)
+
+    def fetch_deals(self):
+        print(f"[cTrader Open API] Fetching deal history for account {self.account_id}...")
+        import time
+        req = ProtoOADealListReq()
+        req.ctidTraderAccountId = self.account_id
+        req.fromTimestamp = int((time.time() - 90 * 86400) * 1000)
+        req.toTimestamp = int(time.time() * 1000)
+        req.maxRows = 50
+        self.client.send(req)
+
+    def sync_deals_to_db(self, deals):
+        try:
+            db_url = os.getenv("DATABASE_URL")
+            if not db_url or not deals:
+                return
+            conn = psycopg2.connect(db_url)
+            cur = conn.cursor()
+            for deal in deals:
+                trade_side = "BUY" if deal.tradeSide == 1 else "SELL"
+                pnl = (deal.moneyDigits if hasattr(deal, 'moneyDigits') else 0) / 100.0
+                exec_price = deal.executionPrice
+                vol = deal.volume / 100.0
+                ticket = str(deal.dealId)
+                open_ts = datetime.fromtimestamp(deal.executionTimestamp / 1000.0, tz=timezone.utc)
+                
+                cur.execute("""
+                    INSERT INTO trade_logs (ticket_id, symbol, trade_type, entry_price, stop_loss, take_profit, volume_units, pnl, status, open_time_utc)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (ticket_id) DO UPDATE SET pnl = EXCLUDED.pnl, status = EXCLUDED.status;
+                """, (
+                    ticket,
+                    "EURUSD",
+                    trade_side,
+                    exec_price,
+                    0.0,
+                    0.0,
+                    vol,
+                    pnl,
+                    "CLOSED",
+                    open_ts
+                ))
+            conn.commit()
+            cur.close()
+            conn.close()
+            print(f"[cTrader Open API] Successfully synced {len(deals)} real deals to PostgreSQL!")
+        except Exception as e:
+            print(f"[DB Error] Failed to sync deals: {e}")
 
     def fetch_symbols_and_subscribe(self):
         req = ProtoOASymbolsListReq()
