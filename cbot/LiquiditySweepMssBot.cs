@@ -121,7 +121,7 @@ namespace cAlgo.Robots
             if (_currentState == BotState.FVG_ORDER_PENDING)
             {
                 _fvgPendingBarCount++;
-                if (_fvgPendingBarCount > MaxPendingBars * 60) // Ticks/bars threshold
+                if (_fvgPendingBarCount > MaxPendingBars * 60)
                 {
                     CancelAllPendingLimitOrders();
                     _currentState = BotState.WAITING_FOR_SWEEP;
@@ -176,12 +176,11 @@ namespace cAlgo.Robots
                 if (_currentState == BotState.SWEEP_DETECTED_BEARISH && lastBar.Close < _mssLevel && isDisplacement)
                 {
                     // Bearish MSS confirmed -> Identify Fair Value Gap (FVG)
-                    // FVG between High of Bar 3 and Low of Bar 1
                     double fvgUpper = Bars.Last(3).Low;
                     double fvgLower = Bars.Last(1).High;
                     if (fvgUpper > fvgLower)
                     {
-                        _fvgEntryLevel = (fvgUpper + fvgLower) / 2.0; // Midpoint FVG
+                        _fvgEntryLevel = (fvgUpper + fvgLower) / 2.0;
                         _stopLossPrice = _sweepLevel + (InvalidationBufferPips * Symbol.PipSize);
                         double riskPips = (_stopLossPrice - _fvgEntryLevel) / Symbol.PipSize;
                         double rewardPips = riskPips * RiskRewardRatio;
@@ -239,8 +238,6 @@ namespace cAlgo.Robots
             }
 
             // Place Limit Order
-            double riskPips = Math.Abs(_stopLossPrice - targetPrice) / Symbol.PipSize;
-            double rewardPips = riskPips * RiskRewardRatio;
             var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", riskPips, rewardPips);
             if (result.IsSuccessful)
             {
