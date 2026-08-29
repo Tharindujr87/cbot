@@ -11,7 +11,7 @@ class StrategyConfigModel(BaseModel):
     max_pending_bars: int = Field(default=8, ge=3, le=20, description="Max bars limit order can remain open before auto-cancelling")
     risk_per_trade_percent: float = Field(default=15.0, ge=1.0, le=50.0, description="Account balance risk per trade")
     circuit_breaker_drawdown_percent: float = Field(default=30.0, ge=5.0, le=50.0, description="Max daily drawdown circuit breaker")
-    emergency_kill_active: bool = Field(default=false, description="Emergency kill status")
+    emergency_kill_active: bool = Field(default=False, description="Emergency kill status")
 
 class TelemetryTickModel(BaseModel):
     symbol: str = "EURUSD"
