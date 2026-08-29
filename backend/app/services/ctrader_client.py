@@ -69,9 +69,9 @@ class HeadlessExecutionEngine:
             for sym in res.symbol:
                 if sym.symbolName == self.symbol_name:
                     self.symbol_id = sym.symbolId
-                    self.digits = sym.digits
-                    self.pip_scale = 10.0 ** sym.digits
-                    print(f"[cTrader Open API] Resolved {self.symbol_name} -> Symbol ID: {self.symbol_id}, Digits: {self.digits}")
+                    self.digits = getattr(sym, 'digits', 5)
+                    self.pip_scale = 100000.0
+                    print(f"[cTrader Open API] Resolved {self.symbol_name} -> Symbol ID: {self.symbol_id}")
                     break
             self.subscribe_to_spots()
 
