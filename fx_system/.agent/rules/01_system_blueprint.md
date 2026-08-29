@@ -29,4 +29,3 @@ The execution cBot reads its operational bounds from a shared hot-reloaded memor
   "circuit_breaker_drawdown_percent": 30.0,
   "emergency_kill_active": false
 }
-```

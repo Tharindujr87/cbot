@@ -1,80 +1,83 @@
 import os
 import json
-from fastapi import FastAPI, Depends, HTTPException, status
+import asyncio
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-import openai
+from .api.routes_control import router as control_router
+from .api.routes_telemetry import router as telemetry_router
+from .api.routes_llm import router as llm_router
+from .services.ipc_bridge import ipc_bridge_service
 
-app = FastAPI(title="Forex Bot Control & Telemetry API", version="2.0.0")
+active_websockets = set()
+
+def broadcast_telemetry(telemetry_data: dict):
+    # When new telemetry arrives from cBot via IPC, push to all active WebSockets
+    if active_websockets:
+        message = json.dumps({"type": "TELEMETRY_UPDATE", "data": telemetry_data})
+        for ws in list(active_websockets):
+            try:
+                asyncio.run_coroutine_threadsafe(ws.send_text(message), loop=asyncio.get_event_loop())
+            except Exception:
+                pass
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Start ZeroMQ / IPC telemetry bridge
+    ipc_bridge_service.on_telemetry_callback = broadcast_telemetry
+    ipc_bridge_service.start()
+    print("[FastAPI] Forex Bot Cognitive & Telemetry Engine Online.")
+    yield
+    # Shutdown
+    ipc_bridge_service.stop()
+    print("[FastAPI] Forex Bot Backend shutting down.")
+
+app = FastAPI(
+    title="Autonomous Forex Execution & Telemetry Daemon",
+    description="Cognitive Plane API, Walk-Forward Analysis & Remote Control System for cTrader Automate Bot",
+    version="2.0.0",
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Tighten in production to frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-CONFIG_PATH = os.getenv("STRATEGY_CONFIG_PATH", "./strategy_config.json")
-openai.api_key = os.getenv("OPENAI_API_KEY", "")
+app.include_router(control_router)
+app.include_router(telemetry_router)
+app.include_router(llm_router)
 
-class StrategyConfigModel(BaseModel):
-    session_start_utc: int = Field(ge=0, le=23)
-    session_end_utc: int = Field(ge=0, le=23)
-    displacement_atr_mult: float = Field(ge=1.0, le=4.0)
-    risk_reward_ratio: float = Field(ge=1.5, le=10.0)
-    invalidation_buffer_pips: float = Field(ge=0.5, le=5.0)
-    max_pending_bars: int = Field(ge=3, le=20)
-    risk_per_trade_percent: float = Field(ge=1.0, le=50.0)
-    circuit_breaker_drawdown_percent: float = Field(ge=5.0, le=50.0)
-    emergency_kill_active: bool
-
-@app.get("/api/status")
-def get_system_status():
-    with open(CONFIG_PATH, "r") as f:
-        config = json.load(f)
+@app.get("/")
+def root():
     return {
-        "status": "ONLINE",
-        "emergency_kill_active": config.get("emergency_kill_active", False),
-        "config": config
+        "system": "Autonomous Forex Execution & Telemetry Daemon",
+        "version": "2.0.0",
+        "status": "OPERATIONAL",
+        "docs": "/docs"
     }
 
-@app.post("/api/control/strategy")
-def update_strategy_config(new_config: StrategyConfigModel):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(new_config.model_dump(), f, indent=2)
-    # Trigger IPC notification to C# cBot here
-    return {"status": "SUCCESS", "message": "Strategy parameters updated and hot-reloaded."}
+@app.websocket("/ws/telemetry")
+async def websocket_telemetry_stream(websocket: WebSocket):
+    await websocket.accept()
+    active_websockets.add(websocket)
+    try:
+        # Send initial state immediately
+        await websocket.send_text(json.dumps({
+            "type": "INITIAL_STATE",
+            "data": ipc_bridge_service.latest_telemetry
+        }))
+        while True:
+            # Keep connection alive, listen for ping or client events
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        active_websockets.discard(websocket)
+    except Exception:
+        active_websockets.discard(websocket)
 
-@app.post("/api/control/kill")
-def emergency_kill_switch():
-    with open(CONFIG_PATH, "r") as f:
-        config = json.load(f)
-    config["emergency_kill_active"] = True
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
-    return {"status": "HALTED", "message": "Emergency kill activated. System locked."}
-
-@app.post("/api/advisor/chatgpt-analysis")
-async def analyze_market_regime(payload: dict):
-    """
-    Asynchronous advisory endpoint: Analyzes market structure & news debrief via OpenAI.
-    Non-blocking to the execution plane.
-    """
-    if not openai.api_key:
-        raise HTTPException(status_code=500, detail="OpenAI API key missing.")
-    
-    prompt = (
-        f"You are a quantitative macro risk advisor. Review the latest trading state: {json.dumps(payload)}. "
-        "Provide a concise summary of risks, high-impact news context, and structural health."
-    )
-    
-    response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a quantitative risk management advisor."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=250
-    )
-    return {"analysis": response.choices[0].message.content}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.app.main:app", host="127.0.0.1", port=8000, reload=True)

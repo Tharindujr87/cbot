@@ -33,6 +33,11 @@ obj/
 *.userosscache
 *.sln.docstates
 
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
 # IDE / OS
 .vscode/
 .idea/

@@ -1,0 +1,11 @@
+{
+  "session_start_utc": 12,
+  "session_end_utc": 17,
+  "displacement_atr_mult": 1.8,
+  "risk_reward_ratio": 3.5,
+  "invalidation_buffer_pips": 1.5,
+  "max_pending_bars": 8,
+  "risk_per_trade_percent": 15.0,
+  "circuit_breaker_drawdown_percent": 30.0,
+  "emergency_kill_active": false
+}
