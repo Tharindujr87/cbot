@@ -14,34 +14,22 @@ namespace cAlgo.Robots
         [Parameter("Symbol Name", DefaultValue = "EURUSD")]
         public string BotSymbol { get; set; }
 
-        [Parameter("SuperTrend ATR Period", DefaultValue = 10, MinValue = 5, MaxValue = 50)]
+        [Parameter("SuperTrend ATR Period", DefaultValue = 10, MinValue = 3, MaxValue = 50)]
         public int AtrPeriod { get; set; }
 
         [Parameter("SuperTrend Multiplier", DefaultValue = 3.0, MinValue = 1.0, MaxValue = 6.0)]
         public double SuperTrendMultiplier { get; set; }
 
-        [Parameter("Enable EMA Trend Filter", DefaultValue = false)]
+        [Parameter("Enable EMA 200 Trend Filter", DefaultValue = false)]
         public bool EnableEmaFilter { get; set; }
 
-        [Parameter("EMA Trend Period", DefaultValue = 200, MinValue = 20, MaxValue = 500)]
+        [Parameter("EMA Period", DefaultValue = 200, MinValue = 20, MaxValue = 500)]
         public int EmaPeriod { get; set; }
-
-        [Parameter("Enable RSI Filter", DefaultValue = false)]
-        public bool EnableRsiFilter { get; set; }
-
-        [Parameter("RSI Period", DefaultValue = 14, MinValue = 5, MaxValue = 30)]
-        public int RsiPeriod { get; set; }
-
-        [Parameter("RSI Long Threshold", DefaultValue = 50.0)]
-        public double RsiLongThreshold { get; set; }
-
-        [Parameter("RSI Short Threshold", DefaultValue = 50.0)]
-        public double RsiShortThreshold { get; set; }
 
         [Parameter("Enable Fixed Take Profit", DefaultValue = false)]
         public bool EnableFixedTp { get; set; }
 
-        [Parameter("Risk Reward Ratio (TP)", DefaultValue = 3.0, MinValue = 1.5, MaxValue = 6.0)]
+        [Parameter("Take Profit (R:R)", DefaultValue = 3.0, MinValue = 1.5, MaxValue = 6.0)]
         public double RiskRewardRatio { get; set; }
 
         [Parameter("Risk Per Trade %", DefaultValue = 2.0, MinValue = 0.5, MaxValue = 10.0)]
@@ -56,15 +44,14 @@ namespace cAlgo.Robots
         // Indicators & State
         private AverageTrueRange _atr;
         private ExponentialMovingAverage _ema;
-        private RelativeStrengthIndex _rsi;
         private double _dailyStartingBalance;
         private int _currentDay;
 
-        // Clean SuperTrend State Tracker
+        // SuperTrend State Variables
         private double _prevUpper;
         private double _prevLower;
-        private int _currentDirection; // 1 = Bullish, -1 = Bearish
-        private double _currentStopLoss;
+        private int _prevDirection; // 1 = Bullish (Green), -1 = Bearish (Red)
+        private bool _isInitialized;
 
         protected override void OnStart()
         {
@@ -73,14 +60,13 @@ namespace cAlgo.Robots
 
             _atr = Indicators.AverageTrueRange(Bars, AtrPeriod, MovingAverageType.Simple);
             _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);
-            _rsi = Indicators.RelativeStrengthIndex(Bars.ClosePrices, RsiPeriod);
 
-            _prevUpper = double.MaxValue;
-            _prevLower = double.MinValue;
-            _currentDirection = 1;
+            _prevUpper = 0;
+            _prevLower = 0;
+            _prevDirection = 1;
+            _isInitialized = false;
 
-            Print("[LuxAlgo SuperTrend Bot Started] Initialized on {0} ({1}) | ATR: {2}, Mult: {3}", 
-                SymbolName, TimeFrame, AtrPeriod, SuperTrendMultiplier);
+            Print("[LuxAlgo SuperTrend Bot] Initialized on {0} ({1})", SymbolName, TimeFrame);
             CheckHotReloadConfig();
         }
 
@@ -107,7 +93,7 @@ namespace cAlgo.Robots
 
         protected override void OnBar()
         {
-            if (Bars.Count < Math.Max(AtrPeriod, Math.Max(EmaPeriod, RsiPeriod)) + 5)
+            if (Bars.Count < Math.Max(AtrPeriod, 15) + 5)
                 return;
 
             DateTime now = Server.Time;
@@ -117,36 +103,52 @@ namespace cAlgo.Robots
                 _dailyStartingBalance = Account.Balance;
             }
 
-            // Calculate SuperTrend dynamically on completed bar Last(1)
             double high = Bars.Last(1).High;
             double low = Bars.Last(1).Low;
             double close = Bars.Last(1).Close;
             double prevClose = Bars.Last(2).Close;
             double atr = _atr.Result.Last(1);
 
-            double basicUpper = ((high + low) / 2.0) + (SuperTrendMultiplier * atr);
-            double basicLower = ((high + low) / 2.0) - (SuperTrendMultiplier * atr);
+            double hl2 = (high + low) / 2.0;
+            double basicUpper = hl2 + (SuperTrendMultiplier * atr);
+            double basicLower = hl2 - (SuperTrendMultiplier * atr);
 
+            if (!_isInitialized)
+            {
+                _prevUpper = basicUpper;
+                _prevLower = basicLower;
+                _prevDirection = close > basicUpper ? 1 : -1;
+                _isInitialized = true;
+                return;
+            }
+
+            // Standard SuperTrend Band Ratcheting
             double finalUpper = (basicUpper < _prevUpper || prevClose > _prevUpper) ? basicUpper : _prevUpper;
             double finalLower = (basicLower > _prevLower || prevClose < _prevLower) ? basicLower : _prevLower;
 
-            int prevDir = _currentDirection;
-            int newDir = prevDir;
+            int oldDirection = _prevDirection;
+            int newDirection = oldDirection;
 
-            if (prevDir == 1 && close < finalLower)
-                newDir = -1;
-            else if (prevDir == -1 && close > finalUpper)
-                newDir = 1;
+            // Trend Reversal Logic with Band Reset
+            if (oldDirection == -1 && close > _prevUpper)
+            {
+                newDirection = 1;
+                finalLower = basicLower;
+            }
+            else if (oldDirection == 1 && close < _prevLower)
+            {
+                newDirection = -1;
+                finalUpper = basicUpper;
+            }
 
             _prevUpper = finalUpper;
             _prevLower = finalLower;
-            _currentDirection = newDir;
-            _currentStopLoss = newDir == 1 ? finalLower : finalUpper;
+            _prevDirection = newDirection;
 
             var activePosition = Positions.Find("LuxSuperTrend", SymbolName);
 
-            // --- BULLISH SIGNAL: Direction flipped from Bearish (-1) to Bullish (+1) ---
-            if (prevDir == -1 && newDir == 1)
+            // --- BUY SIGNAL: SuperTrend flipped from Bearish (-1) to Bullish (+1) ---
+            if (oldDirection == -1 && newDirection == 1)
             {
                 if (activePosition != null && activePosition.TradeType == TradeType.Sell)
                 {
@@ -154,19 +156,19 @@ namespace cAlgo.Robots
                 }
 
                 bool emaPass = !EnableEmaFilter || (close > _ema.Result.Last(1));
-                bool rsiPass = !EnableRsiFilter || (_rsi.Result.Last(1) >= RsiLongThreshold);
 
-                if (emaPass && rsiPass && Positions.Count == 0)
+                if (emaPass && Positions.Count == 0)
                 {
                     double riskPips = (close - finalLower) / Symbol.PipSize;
                     if (riskPips <= 0) riskPips = (atr * SuperTrendMultiplier) / Symbol.PipSize;
+                    if (riskPips < 3.0) riskPips = 3.0;
 
-                    double? takeProfit = EnableFixedTp ? (double?)(close + (riskPips * RiskRewardRatio * Symbol.PipSize)) : null;
-                    ExecuteTrade(TradeType.Buy, close, finalLower, riskPips, takeProfit);
+                    double? takeProfitPips = EnableFixedTp ? (double?)(riskPips * RiskRewardRatio) : null;
+                    ExecuteTrade(TradeType.Buy, close, finalLower, riskPips, takeProfitPips);
                 }
             }
-            // --- BEARISH SIGNAL: Direction flipped from Bullish (+1) to Bearish (-1) ---
-            else if (prevDir == 1 && newDir == -1)
+            // --- SELL SIGNAL: SuperTrend flipped from Bullish (+1) to Bearish (-1) ---
+            else if (oldDirection == 1 && newDirection == -1)
             {
                 if (activePosition != null && activePosition.TradeType == TradeType.Buy)
                 {
@@ -174,20 +176,20 @@ namespace cAlgo.Robots
                 }
 
                 bool emaPass = !EnableEmaFilter || (close < _ema.Result.Last(1));
-                bool rsiPass = !EnableRsiFilter || (_rsi.Result.Last(1) <= RsiShortThreshold);
 
-                if (emaPass && rsiPass && Positions.Count == 0)
+                if (emaPass && Positions.Count == 0)
                 {
                     double riskPips = (finalUpper - close) / Symbol.PipSize;
                     if (riskPips <= 0) riskPips = (atr * SuperTrendMultiplier) / Symbol.PipSize;
+                    if (riskPips < 3.0) riskPips = 3.0;
 
-                    double? takeProfit = EnableFixedTp ? (double?)(close - (riskPips * RiskRewardRatio * Symbol.PipSize)) : null;
-                    ExecuteTrade(TradeType.Sell, close, finalUpper, riskPips, takeProfit);
+                    double? takeProfitPips = EnableFixedTp ? (double?)(riskPips * RiskRewardRatio) : null;
+                    ExecuteTrade(TradeType.Sell, close, finalUpper, riskPips, takeProfitPips);
                 }
             }
         }
 
-        private void ExecuteTrade(TradeType tradeType, double entryPrice, double stopPrice, double riskPips, double? takeProfitPrice)
+        private void ExecuteTrade(TradeType tradeType, double entryPrice, double stopPrice, double riskPips, double? takeProfitPips)
         {
             double riskCapital = Account.Balance * (RiskPerTradePercent / 100.0);
             double volumeInUnits = CalculateVolumeUnits(riskCapital, riskPips);
@@ -204,12 +206,10 @@ namespace cAlgo.Robots
                 volumeInUnits = Symbol.VolumeInUnitsMin;
             }
 
-            double? tpPips = takeProfitPrice.HasValue ? (double?)(Math.Abs(takeProfitPrice.Value - entryPrice) / Symbol.PipSize) : null;
-
-            var result = ExecuteMarketOrder(tradeType, SymbolName, volumeInUnits, "LuxSuperTrend", riskPips, tpPips);
+            var result = ExecuteMarketOrder(tradeType, SymbolName, volumeInUnits, "LuxSuperTrend", riskPips, takeProfitPips);
             if (result.IsSuccessful)
             {
-                Print("[LuxAlgo SuperTrend Entry] {0} {1} units @ {2:F5} | Initial Stop: {3:F5} ({4:F1} pips)", 
+                Print("[SuperTrend ENTRY] {0} {1} units @ {2:F5} | SL: {3:F5} ({4:F1} pips)", 
                     tradeType, volumeInUnits, entryPrice, stopPrice, riskPips);
             }
             else
@@ -253,7 +253,7 @@ namespace cAlgo.Robots
 
         private void TriggerCircuitBreaker(double currentDrawdown)
         {
-            Print("[CIRCUIT BREAKER ACTIVATED] Daily Drawdown reached {0:F2}%. Flattening and halting.", currentDrawdown);
+            Print("[CIRCUIT BREAKER] Daily Drawdown reached {0:F2}%. Halting.", currentDrawdown);
             CloseAllBotPositions();
         }
 
