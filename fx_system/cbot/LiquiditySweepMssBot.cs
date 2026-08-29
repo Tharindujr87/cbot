@@ -238,8 +238,18 @@ namespace cAlgo.Robots
                 return;
             }
 
-            // Place Limit Order using exact price levels
-            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", _stopLossPrice, _takeProfitPrice, null, null, true, true);
+            // Place Limit Order using explicit named arguments
+            var result = PlaceLimitOrder(
+                tradeType: tradeType,
+                symbolName: SymbolName,
+                volumeInUnits: volumeInUnits,
+                targetPrice: targetPrice,
+                label: "SweepMssBot",
+                stopLoss: _stopLossPrice,
+                takeProfit: _takeProfitPrice,
+                hasStopLossInPrice: true,
+                hasTakeProfitInPrice: true
+            );
             if (result.IsSuccessful)
             {
                 _currentState = BotState.FVG_ORDER_PENDING;
