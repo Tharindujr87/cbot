@@ -8,7 +8,7 @@ using cAlgo.API.Internals;
 namespace cAlgo.Robots
 {
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
-    public class SimpleEmaRsiBot : Robot
+    public class TrendPulseRunnerBot : Robot
     {
         [Parameter("Symbol Name", DefaultValue = "EURUSD")]
         public string BotSymbol { get; set; }
