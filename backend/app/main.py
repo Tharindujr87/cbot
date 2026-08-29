@@ -55,6 +55,21 @@ app.include_router(control_router)
 app.include_router(telemetry_router)
 app.include_router(llm_router)
 
+@app.get("/api/auth/login")
+def ctrader_oauth_login():
+    client_id = os.getenv("CTRADER_CLIENT_ID", "")
+    redirect_uri = "http://144.172.107.134/api/auth/callback"
+    auth_url = f"https://openapi.ctrader.com/apps/auth?client_id={client_id}&redirect_uri={redirect_uri}&scope=trading"
+    return {"auth_url": auth_url, "client_id": client_id}
+
+@app.get("/api/auth/callback")
+def ctrader_oauth_callback(code: str = ""):
+    return {
+        "status": "AUTHORIZATION_CODE_RECEIVED",
+        "code": code,
+        "instructions": "Paste this code or your Access Token into .env (CTRADER_ACCESS_TOKEN) to finalize real-time streaming."
+    }
+
 @app.get("/")
 def root():
     return {
