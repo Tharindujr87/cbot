@@ -59,10 +59,37 @@ class HeadlessExecutionEngine:
 
         # 2. Account Authorized Response
         elif payload_type == ProtoOAAccountAuthRes().payloadType:
-            print(f"[cTrader Open API] Account {self.account_id} authorized successfully! Fetching symbol list & subscribing to {self.symbol_name}...")
+            print(f"[cTrader Open API] Account {self.account_id} authorized successfully! Fetching trader profile & symbols...")
+            self.fetch_trader_profile()
             self.fetch_symbols_and_subscribe()
 
-        # 3. Symbols List Response
+        # 3. Trader Profile / Balance Response
+        elif payload_type == ProtoOATraderRes().payloadType:
+            res = ProtoOATraderRes()
+            res.ParseFromString(message.payload)
+            trader = res.trader
+            balance = trader.balance / 100.0 if trader.HasField("balance") else 0.0
+            leverage = trader.leverageInCents / 100.0 if trader.HasField("leverageInCents") else 30.0
+            print(f"[cTrader Open API] Live Pepperstone Balance: ${balance:.2f} | Leverage: 1:{int(leverage)}")
+            
+            from .ipc_bridge import ipc_bridge_service
+            ipc_bridge_service.latest_telemetry.update({
+                "account_balance": round(balance, 2),
+                "account_equity": round(balance, 2),
+                "free_margin": round(balance, 2),
+                "margin_level_percent": 1000.0,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat()
+            })
+            if ipc_bridge_service.on_telemetry_callback:
+                ipc_bridge_service.on_telemetry_callback(ipc_bridge_service.latest_telemetry)
+
+        # 4. Reconciliation Response (Open Positions)
+        elif payload_type == ProtoOAReconcileRes().payloadType:
+            res = ProtoOAReconcileRes()
+            res.ParseFromString(message.payload)
+            print(f"[cTrader Open API] Reconcile: {len(res.position)} open positions, {len(res.order)} pending orders.")
+
+        # 5. Symbols List Response
         elif payload_type == ProtoOASymbolsListRes().payloadType:
             res = ProtoOASymbolsListRes()
             res.ParseFromString(message.payload)
@@ -75,14 +102,14 @@ class HeadlessExecutionEngine:
                     break
             self.subscribe_to_spots()
 
-        # 4. Spot Market Data Event (Live Ticks)
+        # 6. Spot Market Data Event (Live Ticks)
         elif payload_type == ProtoOASpotEvent().payloadType:
             spot = ProtoOASpotEvent()
             spot.ParseFromString(message.payload)
             if spot.symbolId == self.symbol_id:
                 self.process_tick(spot)
 
-        # 5. Execution Event (Order Placed, Filled, SL/TP Hit)
+        # 7. Execution Event (Order Placed, Filled, SL/TP Hit)
         elif payload_type == ProtoOAExecutionEvent().payloadType:
             event = ProtoOAExecutionEvent()
             event.ParseFromString(message.payload)
@@ -94,6 +121,16 @@ class HeadlessExecutionEngine:
         req.ctidTraderAccountId = self.account_id
         req.accessToken = self.access_token
         self.client.send(req)
+
+    def fetch_trader_profile(self):
+        print(f"[cTrader Open API] Requesting trader profile and balance for {self.account_id}...")
+        req = ProtoOATraderReq()
+        req.ctidTraderAccountId = self.account_id
+        self.client.send(req)
+
+        req_rec = ProtoOAReconcileReq()
+        req_rec.ctidTraderAccountId = self.account_id
+        self.client.send(req_rec)
 
     def fetch_symbols_and_subscribe(self):
         req = ProtoOASymbolsListReq()

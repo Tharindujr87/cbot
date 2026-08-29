@@ -14,12 +14,12 @@ export default function App() {
     ask: 1.08549,
     spread_pips: 0.7,
     fsm_state: "WAITING_FOR_SWEEP",
-    account_equity: 10240.50,
-    account_balance: 10000.00,
-    free_margin: 9150.00,
-    margin_level_percent: 840.5,
-    daily_pnl: 240.50,
-    daily_drawdown_percent: 1.25,
+    account_equity: 98.17,
+    account_balance: 98.17,
+    free_margin: 98.17,
+    margin_level_percent: 1000.0,
+    daily_pnl: 0.00,
+    daily_drawdown_percent: 0.00,
     timestamp_utc: new Date().toISOString()
   });
 
