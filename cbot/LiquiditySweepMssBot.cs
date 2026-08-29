@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using System;
 using System.IO;
 using System.Linq;
@@ -237,13 +238,13 @@ namespace cAlgo.Robots
                 return;
             }
 
-            // Place Limit Order using standard pips overload
-            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", riskPips, rewardPips);
+            // Place Limit Order using exact price levels
+            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", _stopLossPrice, _takeProfitPrice, null, null, true, true);
             if (result.IsSuccessful)
             {
                 _currentState = BotState.FVG_ORDER_PENDING;
                 _fvgPendingBarCount = 0;
-                Print("[cBot Order Placed] {0} Limit at {1}, Risk: {2:F1} pips, Reward: {3:F1} pips, Vol: {4}", tradeType, targetPrice, riskPips, rewardPips, volumeInUnits);
+                Print("[cBot Order Placed] {0} Limit at {1}, SL: {2}, TP: {3}, Vol: {4}", tradeType, targetPrice, _stopLossPrice, _takeProfitPrice, volumeInUnits);
             }
             else
             {
