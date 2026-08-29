@@ -1,12 +1,16 @@
 import os
 import json
 import psycopg2
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from ctrader_open_api import Client, Protobuf, TcpProtocol
 from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import *
 from ctrader_open_api.messages.OpenApiMessages_pb2 import *
 
 class HeadlessExecutionEngine:
-    def __init__(self, config_path, env_file):
+    def __init__(self, config_path="strategy_config.json", env_file=None):
         self.client_id = os.getenv("CTRADER_CLIENT_ID")
         self.client_secret = os.getenv("CTRADER_CLIENT_SECRET")
         self.host = os.getenv("CTRADER_HOST", "demo.ctraderapi.com")

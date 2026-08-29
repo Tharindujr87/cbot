@@ -1,6 +1,9 @@
 import os
 import json
 from typing import Dict, Any, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class ChatGPTAdvisor:
     """
@@ -8,7 +11,11 @@ class ChatGPTAdvisor:
     Operates strictly asynchronously and out-of-band to prevent blocking order execution.
     """
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
+        pass
+
+    @property
+    def api_key(self) -> str:
+        return os.getenv("OPENAI_API_KEY", "")
 
     async def generate_macro_regime_analysis(self, context_payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generates macro regime context and high-impact risk commentary."""
