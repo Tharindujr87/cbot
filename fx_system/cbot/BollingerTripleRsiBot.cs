@@ -8,7 +8,7 @@ using cAlgo.API.Internals;
 namespace cAlgo.Robots
 {
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
-    public class SimpleEmaRsiBot : Robot
+    public class BollingerTripleRsiBot : Robot
     {
         [Parameter("Symbol Name", DefaultValue = "EURUSD")]
         public string BotSymbol { get; set; }
@@ -137,7 +137,7 @@ namespace cAlgo.Robots
             DateTime now = Server.Time;
 
             // Check Force Close at 16:45 UTC
-            if ((now.Hour == ForceCloseHourUtc && now.Minute >= ForceCloseMinuteUtc) || now.Hour > ForceCloseHourUtc)
+            if (now.Hour == ForceCloseHourUtc && now.Minute >= ForceCloseMinuteUtc || now.Hour > ForceCloseHourUtc)
             {
                 var pos = Positions.Find("BB3RSI", SymbolName);
                 if (pos != null)

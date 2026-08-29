@@ -13,175 +13,247 @@ namespace cAlgo.Robots
         [Parameter("Symbol Name", DefaultValue = "EURUSD")]
         public string BotSymbol { get; set; }
 
-        [Parameter("Fast EMA Period", DefaultValue = 9, MinValue = 3, MaxValue = 50)]
-        public int FastEmaPeriod { get; set; }
+        // --- Bollinger Bands ---
+        [Parameter("BB Period", Group = "Bollinger Bands", DefaultValue = 20, MinValue = 5, MaxValue = 50)]
+        public int BbPeriod { get; set; }
 
-        [Parameter("Slow EMA Period", DefaultValue = 21, MinValue = 10, MaxValue = 200)]
-        public int SlowEmaPeriod { get; set; }
+        [Parameter("BB Standard Deviations", Group = "Bollinger Bands", DefaultValue = 2.0, MinValue = 1.0, MaxValue = 4.0)]
+        public double BbStdDev { get; set; }
 
-        [Parameter("Trend EMA (Filter)", DefaultValue = 200, MinValue = 50, MaxValue = 500)]
-        public int TrendEmaPeriod { get; set; }
+        // --- Triple RSI Parameters ---
+        [Parameter("RSI 1 (Fast) Period", Group = "Triple RSI", DefaultValue = 7, MinValue = 2, MaxValue = 20)]
+        public int Rsi1Period { get; set; }
 
-        [Parameter("Enable 200 EMA Filter", DefaultValue = true)]
-        public bool EnableTrendFilter { get; set; }
+        [Parameter("RSI 2 (Medium) Period", Group = "Triple RSI", DefaultValue = 14, MinValue = 5, MaxValue = 30)]
+        public int Rsi2Period { get; set; }
 
-        [Parameter("RSI Period", DefaultValue = 14, MinValue = 5, MaxValue = 30)]
-        public int RsiPeriod { get; set; }
+        [Parameter("RSI 3 (Slow) Period", Group = "Triple RSI", DefaultValue = 28, MinValue = 10, MaxValue = 60)]
+        public int Rsi3Period { get; set; }
 
-        [Parameter("RSI Long Level (>)", DefaultValue = 50.0, MinValue = 40.0, MaxValue = 65.0)]
-        public double RsiLongLevel { get; set; }
+        [Parameter("RSI Fast Long Threshold (<= x)", Group = "Triple RSI", DefaultValue = 35.0, MinValue = 10.0, MaxValue = 50.0)]
+        public double RsiFastLongThreshold { get; set; }
 
-        [Parameter("RSI Short Level (<)", DefaultValue = 50.0, MinValue = 35.0, MaxValue = 60.0)]
-        public double RsiShortLevel { get; set; }
+        [Parameter("RSI Medium Long Threshold (<= y)", Group = "Triple RSI", DefaultValue = 45.0, MinValue = 20.0, MaxValue = 55.0)]
+        public double RsiMedLongThreshold { get; set; }
 
-        [Parameter("ATR Period (SL/TP)", DefaultValue = 14, MinValue = 5, MaxValue = 30)]
+        [Parameter("RSI Slow Long Threshold (<= z)", Group = "Triple RSI", DefaultValue = 50.0, MinValue = 30.0, MaxValue = 60.0)]
+        public double RsiSlowLongThreshold { get; set; }
+
+        [Parameter("RSI Fast Short Threshold (>= x)", Group = "Triple RSI", DefaultValue = 65.0, MinValue = 50.0, MaxValue = 90.0)]
+        public double RsiFastShortThreshold { get; set; }
+
+        [Parameter("RSI Medium Short Threshold (>= y)", Group = "Triple RSI", DefaultValue = 55.0, MinValue = 45.0, MaxValue = 80.0)]
+        public double RsiMedShortThreshold { get; set; }
+
+        [Parameter("RSI Slow Short Threshold (>= z)", Group = "Triple RSI", DefaultValue = 50.0, MinValue = 40.0, MaxValue = 70.0)]
+        public double RsiSlowShortThreshold { get; set; }
+
+        // --- Trend & Volatility Filters ---
+        [Parameter("EMA Trend Period", Group = "Trend & Volatility", DefaultValue = 50, MinValue = 10, MaxValue = 200)]
+        public int EmaPeriod { get; set; }
+
+        [Parameter("Enable EMA 50 Filter", Group = "Trend & Volatility", DefaultValue = true)]
+        public bool EnableEmaFilter { get; set; }
+
+        [Parameter("ATR Period", Group = "Trend & Volatility", DefaultValue = 14, MinValue = 5, MaxValue = 30)]
         public int AtrPeriod { get; set; }
 
-        [Parameter("Stop Loss ATR Mult", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 5.0)]
-        public double StopLossAtrMult { get; set; }
+        [Parameter("Max Allowed Spread (Pips)", Group = "Trend & Volatility", DefaultValue = 1.5, MinValue = 0.1, MaxValue = 5.0)]
+        public double MaxAllowedSpreadPips { get; set; }
 
-        [Parameter("Take Profit ATR Mult", DefaultValue = 3.0, MinValue = 1.0, MaxValue = 10.0)]
-        public double TakeProfitAtrMult { get; set; }
+        // --- Session Filter & Time Clocks ---
+        [Parameter("Session Start Hour (UTC)", Group = "Session Filter", DefaultValue = 7, MinValue = 0, MaxValue = 23)]
+        public int SessionStartHourUtc { get; set; }
 
-        [Parameter("Enable Breakeven at 1R", DefaultValue = true)]
-        public bool EnableBreakeven { get; set; }
+        [Parameter("Session End Hour (UTC)", Group = "Session Filter", DefaultValue = 16, MinValue = 0, MaxValue = 23)]
+        public int SessionEndHourUtc { get; set; }
 
-        [Parameter("Risk Per Trade %", DefaultValue = 1.5, MinValue = 0.1, MaxValue = 10.0)]
+        [Parameter("Force Close Hour (UTC)", Group = "Session Filter", DefaultValue = 16, MinValue = 0, MaxValue = 23)]
+        public int ForceCloseHourUtc { get; set; }
+
+        [Parameter("Force Close Minute (UTC)", Group = "Session Filter", DefaultValue = 45, MinValue = 0, MaxValue = 59)]
+        public int ForceCloseMinuteUtc { get; set; }
+
+        // --- Risk & Position Management ---
+        [Parameter("Risk Per Trade %", Group = "Risk Management", DefaultValue = 1.5, MinValue = 0.1, MaxValue = 10.0)]
         public double RiskPerTradePercent { get; set; }
 
-        // Indicators
-        private ExponentialMovingAverage _fastEma;
-        private ExponentialMovingAverage _slowEma;
-        private ExponentialMovingAverage _trendEma;
-        private RelativeStrengthIndex _rsi;
+        [Parameter("SL Multiplier (x ATR)", Group = "Risk Management", DefaultValue = 1.2, MinValue = 0.5, MaxValue = 5.0)]
+        public double SlMultiplier { get; set; }
+
+        [Parameter("TP Multiplier (x ATR)", Group = "Risk Management", DefaultValue = 1.0, MinValue = 0.5, MaxValue = 10.0)]
+        public double TpMultiplier { get; set; }
+
+        [Parameter("Enable Breakeven (+1R)", Group = "Risk Management", DefaultValue = true)]
+        public bool EnableBreakeven { get; set; }
+
+        [Parameter("Enable ATR Trailing Stop", Group = "Risk Management", DefaultValue = true)]
+        public bool EnableTrailingStop { get; set; }
+
+        [Parameter("Trailing Stop ATR Mult", Group = "Risk Management", DefaultValue = 0.8, MinValue = 0.2, MaxValue = 3.0)]
+        public double TrailingAtrMultiplier { get; set; }
+
+        [Parameter("Max Trades Per Day", Group = "Safety Guardrails", DefaultValue = 4, MinValue = 1, MaxValue = 20)]
+        public int MaxTradesPerDay { get; set; }
+
+        [Parameter("Daily Loss Limit %", Group = "Safety Guardrails", DefaultValue = 4.0, MinValue = 1.0, MaxValue = 20.0)]
+        public double DailyLossLimitPercent { get; set; }
+
+        // Indicator References
+        private BollingerBands _bb;
+        private RelativeStrengthIndex _rsi1;
+        private RelativeStrengthIndex _rsi2;
+        private RelativeStrengthIndex _rsi3;
+        private ExponentialMovingAverage _ema;
         private AverageTrueRange _atr;
+
+        // Daily State Variables
+        private double _dailyStartingBalance;
+        private int _currentDay;
+        private int _tradesCountToday;
+        private bool _dailyLossHalted;
 
         protected override void OnStart()
         {
-            _fastEma = Indicators.ExponentialMovingAverage(Bars.ClosePrices, FastEmaPeriod);
-            _slowEma = Indicators.ExponentialMovingAverage(Bars.ClosePrices, SlowEmaPeriod);
-            _trendEma = Indicators.ExponentialMovingAverage(Bars.ClosePrices, TrendEmaPeriod);
-            _rsi = Indicators.RelativeStrengthIndex(Bars.ClosePrices, RsiPeriod);
+            _dailyStartingBalance = Account.Balance;
+            _currentDay = Server.Time.DayOfYear;
+            _tradesCountToday = 0;
+            _dailyLossHalted = false;
+
+            // Initialize Indicators on M15
+            _bb = Indicators.BollingerBands(Bars.ClosePrices, BbPeriod, BbStdDev, MovingAverageType.Simple);
+            _rsi1 = Indicators.RelativeStrengthIndex(Bars.ClosePrices, Rsi1Period);
+            _rsi2 = Indicators.RelativeStrengthIndex(Bars.ClosePrices, Rsi2Period);
+            _rsi3 = Indicators.RelativeStrengthIndex(Bars.ClosePrices, Rsi3Period);
+            _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);
             _atr = Indicators.AverageTrueRange(Bars, AtrPeriod, MovingAverageType.Simple);
 
-            Print("[Simple EMA + RSI Bot] Initialized on {0} ({1})", SymbolName, TimeFrame);
+            Print("[Bollinger 3RSI Bot] Initialized on {0} ({1}) | Session: {2}:00 - {3}:00 UTC", 
+                SymbolName, TimeFrame, SessionStartHourUtc, SessionEndHourUtc);
         }
 
         protected override void OnTick()
         {
-            // Active Position Breakeven Management
-            if (EnableBreakeven)
+            DateTime now = Server.Time;
+
+            // Check Force Close at 16:45 UTC
+            if ((now.Hour == ForceCloseHourUtc && now.Minute >= ForceCloseMinuteUtc) || now.Hour > ForceCloseHourUtc)
             {
-                var position = Positions.Find("SimpleEmaRsi", SymbolName);
-                if (position != null && position.StopLoss.HasValue)
+                var pos = Positions.Find("BB3RSI", SymbolName);
+                if (pos != null)
                 {
-                    double entryPrice = position.EntryPrice;
-                    double currentPrice = position.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask;
-                    double initialRisk = Math.Abs(entryPrice - position.StopLoss.Value);
-
-                    if (initialRisk > 0)
-                    {
-                        double currentProfit = position.TradeType == TradeType.Buy 
-                            ? (currentPrice - entryPrice) 
-                            : (entryPrice - currentPrice);
-
-                        // If profit >= 1.0x initial risk, move Stop Loss to Breakeven (+0.5 pips)
-                        if (currentProfit >= initialRisk)
-                        {
-                            double bePrice = position.TradeType == TradeType.Buy 
-                                ? entryPrice + (0.5 * Symbol.PipSize) 
-                                : entryPrice - (0.5 * Symbol.PipSize);
-
-                            bool shouldUpdate = position.TradeType == TradeType.Buy 
-                                ? position.StopLoss.Value < bePrice 
-                                : position.StopLoss.Value > bePrice;
-
-                            if (shouldUpdate)
-                            {
-                                ModifyPosition(position, bePrice, position.TakeProfit);
-                                Print("[Breakeven Locked] Position SL moved to {0:F5}", bePrice);
-                            }
-                        }
-                    }
+                    ClosePosition(pos);
+                    Print("[EOD FORCE CLOSE] Closed open position at {0}:{1:D2} UTC session end.", now.Hour, now.Minute);
                 }
+            }
+
+            // Daily Drawdown Guard
+            double dailyLoss = _dailyStartingBalance - Account.Equity;
+            double dailyDrawdownPct = (dailyLoss / _dailyStartingBalance) * 100.0;
+            if (dailyDrawdownPct >= DailyLossLimitPercent && !_dailyLossHalted)
+            {
+                _dailyLossHalted = true;
+                Print("[DAILY LOSS LIMIT HIT] Drawdown {0:F2}% >= {1}%. Disabling new entries for today.", 
+                    dailyDrawdownPct, DailyLossLimitPercent);
+            }
+
+            // Manage Breakeven & Trailing Stops
+            var activePosition = Positions.Find("BB3RSI", SymbolName);
+            if (activePosition != null && activePosition.StopLoss.HasValue)
+            {
+                ManagePositionStops(activePosition);
             }
         }
 
         protected override void OnBar()
         {
-            int requiredBars = Math.Max(TrendEmaPeriod, Math.Max(SlowEmaPeriod, RsiPeriod)) + 5;
+            int requiredBars = Math.Max(EmaPeriod, Math.Max(BbPeriod, Rsi3Period)) + 5;
             if (Bars.Count < requiredBars)
                 return;
 
-            // Prior completed bar values
-            double fastPrev = _fastEma.Result.Last(2);
-            double fastCurr = _fastEma.Result.Last(1);
+            DateTime now = Server.Time;
 
-            double slowPrev = _slowEma.Result.Last(2);
-            double slowCurr = _slowEma.Result.Last(1);
+            // Daily Reset at new day
+            if (now.DayOfYear != _currentDay)
+            {
+                _currentDay = now.DayOfYear;
+                _dailyStartingBalance = Account.Balance;
+                _tradesCountToday = 0;
+                _dailyLossHalted = false;
+            }
 
-            double rsiVal = _rsi.Result.Last(1);
-            double closeVal = Bars.ClosePrices.Last(1);
-            double trendEmaVal = _trendEma.Result.Last(1);
+            // Safety Guards: Max trades or Daily Loss Limit
+            if (_tradesCountToday >= MaxTradesPerDay || _dailyLossHalted)
+                return;
+
+            // Session Time Filter (07:00 - 16:00 UTC)
+            if (now.Hour < SessionStartHourUtc || now.Hour >= SessionEndHourUtc)
+                return;
+
+            // Spread Filter
+            double currentSpreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
+            if (currentSpreadPips > MaxAllowedSpreadPips)
+                return;
+
+            // Only 1 concurrent position allowed
+            if (Positions.FindAll("BB3RSI", SymbolName).Length > 0)
+                return;
+
+            // Extract Indicator Values on the completed bar Last(1)
+            double close1 = Bars.ClosePrices.Last(1);
+            double lowerBb1 = _bb.Bottom.Last(1);
+            double upperBb1 = _bb.Top.Last(1);
+
+            double rsi1Val = _rsi1.Result.Last(1);
+            double rsi2Val = _rsi2.Result.Last(1);
+            double rsi3Val = _rsi3.Result.Last(1);
+
+            double ema50Val = _ema.Result.Last(1);
             double atrVal = _atr.Result.Last(1);
 
-            // Fast EMA crosses above Slow EMA
-            bool bullishCross = (fastPrev <= slowPrev) && (fastCurr > slowCurr);
-            // Fast EMA crosses below Slow EMA
-            bool bearishCross = (fastPrev >= slowPrev) && (fastCurr < slowCurr);
+            // --- LONG ENTRY CONDITIONS ---
+            // 1. Close <= Lower BB
+            // 2. 3x RSI Oversold conditions (RSI7 <= x, RSI14 <= y, RSI28 <= z)
+            // 3. Close > 50 EMA (Buying dip in overall bullish structure)
+            bool longBb = close1 <= lowerBb1;
+            bool longRsi = (rsi1Val <= RsiFastLongThreshold) && (rsi2Val <= RsiMedLongThreshold) && (rsi3Val <= RsiSlowLongThreshold);
+            bool longEma = !EnableEmaFilter || (close1 > ema50Val);
 
-            var activePosition = Positions.Find("SimpleEmaRsi", SymbolName);
-
-            // --- BUY ENTRY ---
-            if (bullishCross)
+            if (longBb && longRsi && longEma)
             {
-                // Close opposite Sell trade if open
-                if (activePosition != null && activePosition.TradeType == TradeType.Sell)
-                {
-                    ClosePosition(activePosition);
-                }
+                double slPips = (atrVal * SlMultiplier) / Symbol.PipSize;
+                double tpPips = (atrVal * TpMultiplier) / Symbol.PipSize;
+                if (slPips < 3.0) slPips = 3.0;
 
-                bool trendOk = !EnableTrendFilter || (closeVal > trendEmaVal);
-                bool rsiOk = rsiVal >= RsiLongLevel;
-
-                if (trendOk && rsiOk && Positions.Count == 0)
-                {
-                    double slPips = (atrVal * StopLossAtrMult) / Symbol.PipSize;
-                    double tpPips = (atrVal * TakeProfitAtrMult) / Symbol.PipSize;
-                    if (slPips < 3.0) slPips = 3.0;
-
-                    ExecuteTrade(TradeType.Buy, closeVal, slPips, tpPips);
-                }
+                ExecuteEntry(TradeType.Buy, close1, slPips, tpPips);
+                return;
             }
-            // --- SELL ENTRY ---
-            else if (bearishCross)
+
+            // --- SHORT ENTRY CONDITIONS ---
+            // 1. Close >= Upper BB
+            // 2. 3x RSI Overbought conditions (RSI7 >= x, RSI14 >= y, RSI28 >= z)
+            // 3. Close < 50 EMA (Selling rally in overall bearish structure)
+            bool shortBb = close1 >= upperBb1;
+            bool shortRsi = (rsi1Val >= RsiFastShortThreshold) && (rsi2Val >= RsiMedShortThreshold) && (rsi3Val >= RsiSlowShortThreshold);
+            bool shortEma = !EnableEmaFilter || (close1 < ema50Val);
+
+            if (shortBb && shortRsi && shortEma)
             {
-                // Close opposite Buy trade if open
-                if (activePosition != null && activePosition.TradeType == TradeType.Buy)
-                {
-                    ClosePosition(activePosition);
-                }
+                double slPips = (atrVal * SlMultiplier) / Symbol.PipSize;
+                double tpPips = (atrVal * TpMultiplier) / Symbol.PipSize;
+                if (slPips < 3.0) slPips = 3.0;
 
-                bool trendOk = !EnableTrendFilter || (closeVal < trendEmaVal);
-                bool rsiOk = rsiVal <= RsiShortLevel;
-
-                if (trendOk && rsiOk && Positions.Count == 0)
-                {
-                    double slPips = (atrVal * StopLossAtrMult) / Symbol.PipSize;
-                    double tpPips = (atrVal * TakeProfitAtrMult) / Symbol.PipSize;
-                    if (slPips < 3.0) slPips = 3.0;
-
-                    ExecuteTrade(TradeType.Sell, closeVal, slPips, tpPips);
-                }
+                ExecuteEntry(TradeType.Sell, close1, slPips, tpPips);
+                return;
             }
         }
 
-        private void ExecuteTrade(TradeType tradeType, double entryPrice, double slPips, double tpPips)
+        private void ExecuteEntry(TradeType tradeType, double entryPrice, double slPips, double tpPips)
         {
             double riskCapital = Account.Balance * (RiskPerTradePercent / 100.0);
             double volumeInUnits = CalculateVolumeUnits(riskCapital, slPips);
 
-            // 85% Free Margin Guard
+            // Free Margin Buffer Protection (85%)
             double requiredMargin = volumeInUnits / 30.0;
             if (requiredMargin > (Account.FreeMargin * 0.85))
             {
@@ -194,15 +266,67 @@ namespace cAlgo.Robots
                 volumeInUnits = Symbol.VolumeInUnitsMin;
             }
 
-            var result = ExecuteMarketOrder(tradeType, SymbolName, volumeInUnits, "SimpleEmaRsi", slPips, tpPips);
+            var result = ExecuteMarketOrder(tradeType, SymbolName, volumeInUnits, "BB3RSI", slPips, tpPips);
             if (result.IsSuccessful)
             {
-                Print("[ENTRY] {0} {1} units @ {2:F5} | SL: {3:F1} pips | TP: {4:F1} pips", 
-                    tradeType, volumeInUnits, entryPrice, slPips, tpPips);
+                _tradesCountToday++;
+                Print("[BB 3RSI ENTRY] {0} {1} units @ {2:F5} | SL: {3:F1} pips | TP: {4:F1} pips (Trade #{5} today)", 
+                    tradeType, volumeInUnits, entryPrice, slPips, tpPips, _tradesCountToday);
             }
             else
             {
-                Print("[Order Error] {0}", result.Error);
+                Print("[Order Error] Failed: {0}", result.Error);
+            }
+        }
+
+        private void ManagePositionStops(Position position)
+        {
+            double entryPrice = position.EntryPrice;
+            double currentPrice = position.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask;
+            double initialRisk = Math.Abs(entryPrice - position.StopLoss.Value);
+
+            if (initialRisk <= 0) return;
+
+            double currentProfit = position.TradeType == TradeType.Buy 
+                ? (currentPrice - entryPrice) 
+                : (entryPrice - currentPrice);
+
+            double profitInR = currentProfit / initialRisk;
+
+            // 1. Move to Breakeven (+1.0 pip) at +1.0R
+            if (EnableBreakeven && profitInR >= 1.0)
+            {
+                double bePrice = position.TradeType == TradeType.Buy 
+                    ? entryPrice + (1.0 * Symbol.PipSize) 
+                    : entryPrice - (1.0 * Symbol.PipSize);
+
+                bool needsBe = position.TradeType == TradeType.Buy 
+                    ? position.StopLoss.Value < bePrice 
+                    : position.StopLoss.Value > bePrice;
+
+                if (needsBe)
+                {
+                    ModifyPosition(position, bePrice, position.TakeProfit);
+                    Print("[Breakeven Locked] Stop Loss moved to Entry + 1 pip ({0:F5})", bePrice);
+                }
+            }
+
+            // 2. ATR Trailing Stop (Trail by ATR * TrailingAtrMultiplier after +1.0R)
+            if (EnableTrailingStop && profitInR >= 1.0)
+            {
+                double atrTrailDistance = _atr.Result.Last(1) * TrailingAtrMultiplier;
+                double trailStopPrice = position.TradeType == TradeType.Buy 
+                    ? currentPrice - atrTrailDistance 
+                    : currentPrice + atrTrailDistance;
+
+                bool isTighter = position.TradeType == TradeType.Buy 
+                    ? trailStopPrice > position.StopLoss.Value 
+                    : trailStopPrice < position.StopLoss.Value;
+
+                if (isTighter)
+                {
+                    ModifyPosition(position, trailStopPrice, position.TakeProfit);
+                }
             }
         }
 
