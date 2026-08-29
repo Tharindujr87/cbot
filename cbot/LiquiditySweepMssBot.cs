@@ -238,18 +238,10 @@ namespace cAlgo.Robots
                 return;
             }
 
-            // Place Limit Order using explicit named arguments
-            var result = PlaceLimitOrder(
-                tradeType: tradeType,
-                symbolName: SymbolName,
-                volumeInUnits: volumeInUnits,
-                targetPrice: targetPrice,
-                label: "SweepMssBot",
-                stopLoss: _stopLossPrice,
-                takeProfit: _takeProfitPrice,
-                hasStopLossInPrice: true,
-                hasTakeProfitInPrice: true
-            );
+            // Place Limit Order
+            double riskPips = Math.Abs(_stopLossPrice - targetPrice) / Symbol.PipSize;
+            double rewardPips = riskPips * RiskRewardRatio;
+            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", riskPips, rewardPips);
             if (result.IsSuccessful)
             {
                 _currentState = BotState.FVG_ORDER_PENDING;
