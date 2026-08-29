@@ -62,7 +62,6 @@ namespace cAlgo.Robots
         private double _fvgEntryLevel;
         private double _stopLossPrice;
         private double _takeProfitPrice;
-        private TradeType _pendingTradeType;
         private int _fvgPendingBarCount;
 
         protected override void OnStart()
@@ -146,7 +145,6 @@ namespace cAlgo.Robots
                 
                 double recent15MHigh = _bars15M.HighPrices.Maximum(15);
                 double recent15MLow = _bars15M.LowPrices.Minimum(15);
-                double currentPrice = Symbol.Ask;
 
                 // Bearish Sweep: 15M High pierced then rejected
                 if (Bars.Last(1).High > recent15MHigh && Bars.Last(1).Close < recent15MHigh)
@@ -188,7 +186,7 @@ namespace cAlgo.Robots
                         double rewardPips = riskPips * RiskRewardRatio;
                         _takeProfitPrice = _fvgEntryLevel - (rewardPips * Symbol.PipSize);
 
-                        PlaceFvgLimitOrder(TradeType.Sell, _fvgEntryLevel, _stopLossPrice, _takeProfitPrice, riskPips);
+                        PlaceFvgLimitOrder(TradeType.Sell, _fvgEntryLevel, riskPips, rewardPips);
                     }
                 }
                 else if (_currentState == BotState.SWEEP_DETECTED_BULLISH && lastBar.Close > _mssLevel && isDisplacement)
@@ -204,13 +202,13 @@ namespace cAlgo.Robots
                         double rewardPips = riskPips * RiskRewardRatio;
                         _takeProfitPrice = _fvgEntryLevel + (rewardPips * Symbol.PipSize);
 
-                        PlaceFvgLimitOrder(TradeType.Buy, _fvgEntryLevel, _stopLossPrice, _takeProfitPrice, riskPips);
+                        PlaceFvgLimitOrder(TradeType.Buy, _fvgEntryLevel, riskPips, rewardPips);
                     }
                 }
             }
         }
 
-        private void PlaceFvgLimitOrder(TradeType tradeType, double targetPrice, double sl, double tp, double riskPips)
+        private void PlaceFvgLimitOrder(TradeType tradeType, double targetPrice, double riskPips, double rewardPips)
         {
             // Safety 1: Spread Guard (Spread <= 1.2 pips)
             double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
@@ -239,13 +237,13 @@ namespace cAlgo.Robots
                 return;
             }
 
-            // Place Limit Order
-            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", sl, tp);
+            // Place Limit Order using standard pips overload
+            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", riskPips, rewardPips);
             if (result.IsSuccessful)
             {
                 _currentState = BotState.FVG_ORDER_PENDING;
                 _fvgPendingBarCount = 0;
-                Print("[cBot Order Placed] {0} Limit at {1}, SL: {2}, TP: {3}, Vol: {4}", tradeType, targetPrice, sl, tp, volumeInUnits);
+                Print("[cBot Order Placed] {0} Limit at {1}, Risk: {2:F1} pips, Reward: {3:F1} pips, Vol: {4}", tradeType, targetPrice, riskPips, rewardPips, volumeInUnits);
             }
             else
             {
@@ -300,9 +298,9 @@ namespace cAlgo.Robots
         {
             try
             {
-                if (!File.Exists(ConfigFilePath)) return;
-                string json = File.ReadAllText(ConfigFilePath);
-                // Simple parsing for key parameters
+                if (!System.IO.File.Exists(ConfigFilePath)) return;
+                string json = System.IO.File.ReadAllText(ConfigFilePath);
+                // Parsing for emergency kill status
                 if (json.Contains("\"emergency_kill_active\": true") && _currentState != BotState.EMERGENCY_KILL)
                 {
                     TriggerEmergencyKill();
