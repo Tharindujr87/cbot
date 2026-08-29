@@ -155,6 +155,9 @@ class HeadlessExecutionEngine:
     def start(self):
         print(f"[cTrader Open API] Starting client connection to {self.host}:{self.port}...")
         self.client.startService()
+        from twisted.internet import reactor
+        if not reactor.running:
+            reactor.run()
 
 if __name__ == "__main__":
     engine = HeadlessExecutionEngine()
