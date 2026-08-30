@@ -15,14 +15,6 @@ namespace cAlgo.Robots
         Liquidity_Sweep_Only
     }
 
-    public enum TradeSetupType
-    {
-        NONE,
-        TREND_PULLBACK_BULLISH,
-        TREND_PULLBACK_BEARISH,
-        LIQUIDITY_SWEEP_BULLISH,
-        LIQUIDITY_SWEEP_BEARISH
-    }
 
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class LiquiditySweepMssBot : Robot
@@ -132,7 +124,6 @@ namespace cAlgo.Robots
         private RelativeStrengthIndex _rsi15M;
 
         // State Machine
-        private TradeSetupType _pendingSetup;
         private bool _isPendingOrderActive;
         private int _pendingBarCounter;
         private double _dailyStartingBalance;
@@ -147,7 +138,6 @@ namespace cAlgo.Robots
         {
             _dailyStartingBalance = Account.Balance;
             _currentDay = Server.Time.DayOfYear;
-            _pendingSetup = TradeSetupType.NONE;
             _isPendingOrderActive = false;
             _isCircuitHalted = false;
 
@@ -226,7 +216,6 @@ namespace cAlgo.Robots
                 {
                     CancelAllPendingOrders();
                     _isPendingOrderActive = false;
-                    _pendingSetup = TradeSetupType.NONE;
                     Print("[Expiration] Pending FVG Limit Order expired after {0} bars.", MaxPendingBars);
                 }
                 return;
