@@ -8,23 +8,20 @@ using cAlgo.API.Internals;
 
 namespace cAlgo.Robots
 {
-    public enum BotState
+    public enum EngineMode
     {
-        WAITING_FOR_SWEEP,
-        SWEEP_DETECTED_BULLISH,
-        SWEEP_DETECTED_BEARISH,
-        FVG_ORDER_PENDING,
-        IN_TRADE,
-        HALTED_CIRCUIT_BREAKER,
-        EMERGENCY_KILL
+        Hybrid_Dual_Engine,
+        Trend_Continuation_Only,
+        Liquidity_Sweep_Only
     }
 
-    public enum FvgEntryType
+    public enum TradeSetupType
     {
-        Auto_Adaptive,
-        Midpoint_50,
-        Proximal_Edge,
-        Market_On_MSS
+        NONE,
+        TREND_PULLBACK_BULLISH,
+        TREND_PULLBACK_BEARISH,
+        LIQUIDITY_SWEEP_BULLISH,
+        LIQUIDITY_SWEEP_BEARISH
     }
 
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
@@ -33,65 +30,90 @@ namespace cAlgo.Robots
         [Parameter("Symbol Name", DefaultValue = "EURUSD")]
         public string BotSymbol { get; set; }
 
-        // --- Auto-Adaptive Intelligence ---
-        [Parameter("Enable Auto-Adaptive Engine", Group = "Adaptive Intelligence", DefaultValue = true)]
-        public bool EnableAdaptiveEngine { get; set; }
+        [Parameter("Engine Mode", Group = "System Engine", DefaultValue = EngineMode.Hybrid_Dual_Engine)]
+        public EngineMode OperatingMode { get; set; }
 
-        [Parameter("Enable Volume Footprint Filter", Group = "Adaptive Intelligence", DefaultValue = true)]
-        public bool EnableVolumeFilter { get; set; }
+        // --- Engine 1: Trend Continuation & FVG Pullbacks ---
+        [Parameter("Enable Trend Engine", Group = "Engine 1: Trend Continuation", DefaultValue = true)]
+        public bool EnableTrendEngine { get; set; }
 
-        [Parameter("Min Relative Volume (RVol)", Group = "Adaptive Intelligence", DefaultValue = 1.25, MinValue = 1.0, MaxValue = 3.0)]
-        public double MinRelativeVolume { get; set; }
+        [Parameter("15M Fast EMA Period", Group = "Engine 1: Trend Continuation", DefaultValue = 20, MinValue = 5, MaxValue = 50)]
+        public int FastEmaPeriod { get; set; }
 
-        [Parameter("Enable 1H Macro Structure Filter", Group = "Adaptive Intelligence", DefaultValue = true)]
-        public bool EnableHtfStructureFilter { get; set; }
+        [Parameter("15M Slow EMA Period", Group = "Engine 1: Trend Continuation", DefaultValue = 50, MinValue = 20, MaxValue = 200)]
+        public int SlowEmaPeriod { get; set; }
 
-        [Parameter("Min Sweep Wick Rejection %", Group = "Adaptive Intelligence", DefaultValue = 40.0, MinValue = 20.0, MaxValue = 80.0)]
+        [Parameter("1H Macro Trend EMA", Group = "Engine 1: Trend Continuation", DefaultValue = 50, MinValue = 20, MaxValue = 200)]
+        public int MacroEmaPeriod { get; set; }
+
+        [Parameter("Trend Displacement ATR Mult", Group = "Engine 1: Trend Continuation", DefaultValue = 0.6, MinValue = 0.3, MaxValue = 2.0)]
+        public double TrendDisplacementAtrMult { get; set; }
+
+        // --- Engine 2: Liquidity Exhaustion Sweep ---
+        [Parameter("Enable Sweep Engine", Group = "Engine 2: Liquidity Exhaustion", DefaultValue = true)]
+        public bool EnableSweepEngine { get; set; }
+
+        [Parameter("15M Sweep Lookback Bars", Group = "Engine 2: Liquidity Exhaustion", DefaultValue = 20, MinValue = 10, MaxValue = 50)]
+        public int SweepLookbackBars { get; set; }
+
+        [Parameter("Min Wick Rejection %", Group = "Engine 2: Liquidity Exhaustion", DefaultValue = 40.0, MinValue = 20.0, MaxValue = 80.0)]
         public double MinWickRejectionPercent { get; set; }
 
-        // --- Core Strategy Parameters ---
-        [Parameter("Displacement ATR Mult", Group = "SMC Strategy", DefaultValue = 0.6, MinValue = 0.3, MaxValue = 3.0)]
-        public double DisplacementAtrMult { get; set; }
+        [Parameter("Require RSI Exhaustion for Sweeps", Group = "Engine 2: Liquidity Exhaustion", DefaultValue = true)]
+        public bool RequireRsiExhaustion { get; set; }
 
-        [Parameter("Risk Reward Ratio", Group = "SMC Strategy", DefaultValue = 6.5, MinValue = 1.5, MaxValue = 15.0)]
+        [Parameter("RSI Overbought Level", Group = "Engine 2: Liquidity Exhaustion", DefaultValue = 68.0, MinValue = 60.0, MaxValue = 85.0)]
+        public double RsiOverboughtLevel { get; set; }
+
+        [Parameter("RSI Oversold Level", Group = "Engine 2: Liquidity Exhaustion", DefaultValue = 32.0, MinValue = 15.0, MaxValue = 40.0)]
+        public double RsiOversoldLevel { get; set; }
+
+        // --- Volume Footprint Filter ---
+        [Parameter("Enable Volume Footprint", Group = "Volume Intelligence", DefaultValue = true)]
+        public bool EnableVolumeFilter { get; set; }
+
+        [Parameter("Min Relative Volume (RVol)", Group = "Volume Intelligence", DefaultValue = 1.15, MinValue = 1.0, MaxValue = 2.5)]
+        public double MinRelativeVolume { get; set; }
+
+        // --- Trade Management & Dynamic Trailing ---
+        [Parameter("Risk Reward Ratio (Base TP)", Group = "Trade Management", DefaultValue = 5.5, MinValue = 2.0, MaxValue = 12.0)]
         public double RiskRewardRatio { get; set; }
 
-        [Parameter("Invalidation Buffer (Pips)", Group = "SMC Strategy", DefaultValue = 4.5, MinValue = 0.5, MaxValue = 10.0)]
+        [Parameter("Invalidation SL Buffer (Pips)", Group = "Trade Management", DefaultValue = 4.0, MinValue = 0.5, MaxValue = 10.0)]
         public double InvalidationBufferPips { get; set; }
 
-        [Parameter("Max Pending Bars", Group = "SMC Strategy", DefaultValue = 16, MinValue = 3, MaxValue = 50)]
+        [Parameter("Max Pending Bars", Group = "Trade Management", DefaultValue = 16, MinValue = 3, MaxValue = 40)]
         public int MaxPendingBars { get; set; }
 
-        [Parameter("FVG Entry Mode", Group = "SMC Strategy", DefaultValue = FvgEntryType.Auto_Adaptive)]
-        public FvgEntryType EntryMode { get; set; }
-
-        [Parameter("15M Lookback Bars", Group = "SMC Strategy", DefaultValue = 20, MinValue = 5, MaxValue = 50)]
-        public int LookbackBars15M { get; set; }
-
-        // --- Trade Management & Protection ---
         [Parameter("Enable Breakeven Lock", Group = "Trade Management", DefaultValue = true)]
         public bool EnableBreakeven { get; set; }
 
-        [Parameter("Breakeven Trigger (+R)", Group = "Trade Management", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 4.0)]
+        [Parameter("Breakeven Trigger (+R)", Group = "Trade Management", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 3.0)]
         public double BreakevenTriggerR { get; set; }
 
-        [Parameter("Breakeven Lock Offset (Pips)", Group = "Trade Management", DefaultValue = 0.5, MinValue = 0.0, MaxValue = 3.0)]
+        [Parameter("Breakeven Offset (Pips)", Group = "Trade Management", DefaultValue = 0.5, MinValue = 0.0, MaxValue = 3.0)]
         public double BreakevenOffsetPips { get; set; }
 
-        [Parameter("Enable Partial Take Profit", Group = "Trade Management", DefaultValue = false)]
+        [Parameter("Enable Partial TP", Group = "Trade Management", DefaultValue = true)]
         public bool EnablePartialTp { get; set; }
 
-        [Parameter("Partial TP Trigger (+R)", Group = "Trade Management", DefaultValue = 3.0, MinValue = 1.5, MaxValue = 5.0)]
+        [Parameter("Partial TP Trigger (+R)", Group = "Trade Management", DefaultValue = 2.5, MinValue = 1.5, MaxValue = 4.0)]
         public double PartialTpTriggerR { get; set; }
 
         [Parameter("Partial TP Volume %", Group = "Trade Management", DefaultValue = 50.0, MinValue = 10.0, MaxValue = 90.0)]
         public double PartialTpPercent { get; set; }
 
-        // --- Risk & Circuit Breaker ---
-        [Parameter("Risk Per Trade %", Group = "Risk Controls", DefaultValue = 2.5, MinValue = 0.1, MaxValue = 30.0)]
+        [Parameter("Enable Dynamic ATR Trailing Stop", Group = "Trade Management", DefaultValue = true)]
+        public bool EnableAtrTrailingStop { get; set; }
+
+        [Parameter("Trailing ATR Multiplier", Group = "Trade Management", DefaultValue = 2.0, MinValue = 1.0, MaxValue = 4.0)]
+        public double TrailingAtrMultiplier { get; set; }
+
+        // --- Risk & Protection ---
+        [Parameter("Risk Per Trade %", Group = "Risk Controls", DefaultValue = 3.0, MinValue = 0.1, MaxValue = 20.0)]
         public double RiskPerTradePercent { get; set; }
 
-        [Parameter("Circuit Breaker Drawdown %", Group = "Risk Controls", DefaultValue = 20.0, MinValue = 5.0, MaxValue = 50.0)]
+        [Parameter("Circuit Breaker Drawdown %", Group = "Risk Controls", DefaultValue = 15.0, MinValue = 5.0, MaxValue = 40.0)]
         public double CircuitBreakerDrawdownPercent { get; set; }
 
         [Parameter("Max Spread (Pips)", Group = "Risk Controls", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 5.0)]
@@ -101,43 +123,47 @@ namespace cAlgo.Robots
         public string ConfigFilePath { get; set; }
 
         // Multi-Timeframe Series & Indicators
-        private BotState _currentState;
         private Bars _bars15M;
         private Bars _bars1H;
         private AverageTrueRange _atr5M;
-        private AverageTrueRange _atr100M;
-        private ExponentialMovingAverage _ema50_1H;
+        private ExponentialMovingAverage _emaFast15M;
+        private ExponentialMovingAverage _emaSlow15M;
+        private ExponentialMovingAverage _emaMacro1H;
+        private RelativeStrengthIndex _rsi15M;
 
-        // Daily State
+        // State Machine
+        private TradeSetupType _pendingSetup;
+        private bool _isPendingOrderActive;
+        private int _pendingBarCounter;
         private double _dailyStartingBalance;
         private int _currentDay;
-        private double _sweepLevel;
-        private double _mssLevel;
-        private double _fvgEntryLevel;
-        private double _stopLossPrice;
-        private double _takeProfitPrice;
-        private int _fvgPendingBarCount;
-        private int _sweepBarIndex;
         private bool _isBreakevenSet;
         private bool _isPartialTpSet;
+        private double _highestPriceSinceEntry;
+        private double _lowestPriceSinceEntry;
+        private bool _isCircuitHalted;
 
         protected override void OnStart()
         {
-            _currentState = BotState.WAITING_FOR_SWEEP;
             _dailyStartingBalance = Account.Balance;
             _currentDay = Server.Time.DayOfYear;
+            _pendingSetup = TradeSetupType.NONE;
+            _isPendingOrderActive = false;
+            _isCircuitHalted = false;
 
             _bars15M = MarketData.GetBars(TimeFrame.Minute15, BotSymbol);
             _bars1H = MarketData.GetBars(TimeFrame.Hour, BotSymbol);
 
             _atr5M = Indicators.AverageTrueRange(Bars, 14, MovingAverageType.Simple);
-            _atr100M = Indicators.AverageTrueRange(Bars, 100, MovingAverageType.Simple);
-            _ema50_1H = Indicators.ExponentialMovingAverage(_bars1H.ClosePrices, 50);
+            _emaFast15M = Indicators.ExponentialMovingAverage(_bars15M.ClosePrices, FastEmaPeriod);
+            _emaSlow15M = Indicators.ExponentialMovingAverage(_bars15M.ClosePrices, SlowEmaPeriod);
+            _emaMacro1H = Indicators.ExponentialMovingAverage(_bars1H.ClosePrices, MacroEmaPeriod);
+            _rsi15M = Indicators.RelativeStrengthIndex(_bars15M.ClosePrices, 14);
 
             _isBreakevenSet = false;
             _isPartialTpSet = false;
 
-            Print("[Smart-Money Bot Started] Auto-Adaptive Liquidity & Structure Engine initialized on {0} ({1})", BotSymbol, TimeFrame);
+            Print("[Hybrid Dual-Engine Initialized] Mode: {0} on {1} ({2})", OperatingMode, BotSymbol, TimeFrame);
             CheckHotReloadConfig();
         }
 
@@ -147,85 +173,168 @@ namespace cAlgo.Robots
 
             DateTime now = Server.Time;
 
-            // Reset Daily Circuit Breaker at Midnight
+            // Daily Reset at Midnight (00:00 UTC)
             if (now.DayOfYear != _currentDay)
             {
                 _currentDay = now.DayOfYear;
                 _dailyStartingBalance = Account.Equity;
-                if (_currentState == BotState.HALTED_CIRCUIT_BREAKER)
+                if (_isCircuitHalted)
                 {
-                    _currentState = BotState.WAITING_FOR_SWEEP;
+                    _isCircuitHalted = false;
                     Print("[Daily Reset] New trading day started. Circuit breaker cleared.");
                 }
             }
 
-            if (_currentState == BotState.EMERGENCY_KILL || _currentState == BotState.HALTED_CIRCUIT_BREAKER)
-                return;
+            if (_isCircuitHalted) return;
 
-            // Daily Drawdown Circuit Breaker Guard
+            // Daily Drawdown Circuit Breaker
             double dailyLoss = _dailyStartingBalance - Account.Equity;
             double drawdownPercent = (dailyLoss / _dailyStartingBalance) * 100.0;
             if (drawdownPercent >= CircuitBreakerDrawdownPercent)
             {
-                TriggerCircuitBreaker(drawdownPercent);
+                _isCircuitHalted = true;
+                Print("[CIRCUIT BREAKER] Daily Drawdown {0:F2}% reached limit. Halting robot for today.", drawdownPercent);
+                CancelAllPendingOrders();
+                CloseAllPositions();
                 return;
             }
 
-            // Active Trade Management
-            var activePosition = Positions.Find("SweepMssBot", SymbolName);
+            // Active Position Management
+            var activePosition = Positions.Find("HybridSweepMss", SymbolName);
             if (activePosition != null)
             {
-                _currentState = BotState.IN_TRADE;
                 ManageOpenPosition(activePosition);
             }
-            else if (_currentState == BotState.IN_TRADE)
+            else
             {
-                _currentState = BotState.WAITING_FOR_SWEEP;
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
+                _highestPriceSinceEntry = double.MinValue;
+                _lowestPriceSinceEntry = double.MaxValue;
             }
         }
 
         protected override void OnBar()
         {
-            if (_currentState == BotState.EMERGENCY_KILL || _currentState == BotState.HALTED_CIRCUIT_BREAKER)
-                return;
+            if (_isCircuitHalted) return;
 
             // Manage Pending Order Expiration
-            if (_currentState == BotState.FVG_ORDER_PENDING)
+            if (_isPendingOrderActive)
             {
-                _fvgPendingBarCount++;
-                if (_fvgPendingBarCount >= MaxPendingBars)
+                _pendingBarCounter++;
+                if (_pendingBarCounter >= MaxPendingBars)
                 {
-                    CancelAllPendingLimitOrders();
-                    _currentState = BotState.WAITING_FOR_SWEEP;
-                    Print("[cBot Expiration] FVG Limit Order expired after {0} bars.", MaxPendingBars);
+                    CancelAllPendingOrders();
+                    _isPendingOrderActive = false;
+                    _pendingSetup = TradeSetupType.NONE;
+                    Print("[Expiration] Pending FVG Limit Order expired after {0} bars.", MaxPendingBars);
                 }
                 return;
             }
 
-            // Timeout sweep if no MSS occurs within 20 bars
-            if (_currentState == BotState.SWEEP_DETECTED_BEARISH || _currentState == BotState.SWEEP_DETECTED_BULLISH)
+            if (_bars15M.Count < 50 || _bars1H.Count < 50 || Bars.Count < 30) return;
+
+            double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
+            if (spreadPips > MaxSpreadPips) return;
+
+            // Check Active Position
+            if (Positions.Find("HybridSweepMss", SymbolName) != null) return;
+
+            // Volume Validation
+            bool volumeConfirmed = true;
+            if (EnableVolumeFilter)
             {
-                if (Bars.Count - _sweepBarIndex > 20)
+                double sumVol = 0;
+                int vLookback = Math.Min(20, Bars.Count - 2);
+                for (int i = 2; i <= vLookback + 1; i++) sumVol += Bars.TickVolumes.Last(i);
+                double avgVol = sumVol / vLookback;
+                double rVol = avgVol > 0 ? (Bars.Last(1).TickVolume / avgVol) : 1.0;
+                volumeConfirmed = rVol >= MinRelativeVolume;
+            }
+
+            // =========================================================================
+            // ENGINE 1: TREND CONTINUATION & FVG PULLBACK ENGINE (Primary ~70% Win Rate)
+            // =========================================================================
+            if ((OperatingMode == EngineMode.Hybrid_Dual_Engine || OperatingMode == EngineMode.Trend_Continuation_Only) && EnableTrendEngine)
+            {
+                double htf1HClose = _bars1H.ClosePrices.Last(1);
+                double htf1HEma = _emaMacro1H.Result.Last(1);
+                double m15Close = _bars15M.ClosePrices.Last(1);
+                double m15FastEma = _emaFast15M.Result.Last(1);
+                double m15SlowEma = _emaSlow15M.Result.Last(1);
+
+                bool isBullishTrend = htf1HClose > htf1HEma && m15Close > m15FastEma && m15FastEma > m15SlowEma;
+                bool isBearishTrend = htf1HClose < htf1HEma && m15Close < m15FastEma && m15FastEma < m15SlowEma;
+
+                var lastBar = Bars.Last(1);
+                double bodySize = Math.Abs(lastBar.Close - lastBar.Open);
+                double currentAtr = _atr5M.Result.Last(1);
+                bool isDisplacement = bodySize >= (TrendDisplacementAtrMult * currentAtr);
+
+                // --- Bullish Trend Continuation FVG Entry ---
+                if (isBullishTrend && isDisplacement && volumeConfirmed)
                 {
-                    _currentState = BotState.WAITING_FOR_SWEEP;
-                    Print("[cBot Timeout] Sweep expired without confirmed MSS displacement. Resetting.");
+                    double recentM5High = Bars.HighPrices.Maximum(10);
+                    if (lastBar.Close >= recentM5High) // Break of structure to upside
+                    {
+                        double fvgLower = Bars.Last(3).High;
+                        double fvgUpper = Bars.Last(1).Low;
+
+                        if (fvgUpper > fvgLower) // Valid Bullish FVG
+                        {
+                            double entryPrice = (fvgUpper + fvgLower) / 2.0;
+                            double swingLow = Bars.LowPrices.Minimum(6);
+                            double stopLossPrice = swingLow - (InvalidationBufferPips * Symbol.PipSize);
+                            double riskPips = Math.Abs(entryPrice - stopLossPrice) / Symbol.PipSize;
+
+                            if (riskPips >= 2.0)
+                            {
+                                double rewardPips = riskPips * RiskRewardRatio;
+                                double takeProfitPrice = entryPrice + (rewardPips * Symbol.PipSize);
+
+                                PlaceHybridLimitOrder(TradeType.Buy, entryPrice, stopLossPrice, takeProfitPrice, riskPips, rewardPips, "Trend-BOS");
+                                return;
+                            }
+                        }
+                    }
+                }
+                // --- Bearish Trend Continuation FVG Entry ---
+                else if (isBearishTrend && isDisplacement && volumeConfirmed)
+                {
+                    double recentM5Low = Bars.LowPrices.Minimum(10);
+                    if (lastBar.Close <= recentM5Low) // Break of structure to downside
+                    {
+                        double fvgUpper = Bars.Last(3).Low;
+                        double fvgLower = Bars.Last(1).High;
+
+                        if (fvgUpper > fvgLower) // Valid Bearish FVG
+                        {
+                            double entryPrice = (fvgUpper + fvgLower) / 2.0;
+                            double swingHigh = Bars.HighPrices.Maximum(6);
+                            double stopLossPrice = swingHigh + (InvalidationBufferPips * Symbol.PipSize);
+                            double riskPips = Math.Abs(stopLossPrice - entryPrice) / Symbol.PipSize;
+
+                            if (riskPips >= 2.0)
+                            {
+                                double rewardPips = riskPips * RiskRewardRatio;
+                                double takeProfitPrice = entryPrice - (rewardPips * Symbol.PipSize);
+
+                                PlaceHybridLimitOrder(TradeType.Sell, entryPrice, stopLossPrice, takeProfitPrice, riskPips, rewardPips, "Trend-BOS");
+                                return;
+                            }
+                        }
+                    }
                 }
             }
 
-            // Step A: Check 15M High/Low Liquidity Sweep
-            if (_currentState == BotState.WAITING_FOR_SWEEP)
+            // =========================================================================
+            // ENGINE 2: LIQUIDITY EXHAUSTION SWEEP ENGINE (Reversals at True Extremes)
+            // =========================================================================
+            if ((OperatingMode == EngineMode.Hybrid_Dual_Engine || OperatingMode == EngineMode.Liquidity_Sweep_Only) && EnableSweepEngine)
             {
-                if (_bars15M.Count < LookbackBars15M || Bars.Count < LookbackBars15M || _bars1H.Count < 50) return;
-
-                double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
-                if (spreadPips > MaxSpreadPips) return;
-
-                // Calculate Prior 15M High/Low Swing Liquidity
                 double recent15MHigh = double.MinValue;
                 double recent15MLow = double.MaxValue;
-                int lookback = Math.Min(LookbackBars15M, _bars15M.Count - 1);
+                int lookback = Math.Min(SweepLookbackBars, _bars15M.Count - 1);
                 for (int i = 1; i <= lookback; i++)
                 {
                     if (_bars15M.HighPrices.Last(i) > recent15MHigh) recent15MHigh = _bars15M.HighPrices.Last(i);
@@ -235,154 +344,55 @@ namespace cAlgo.Robots
                 var lastBar = Bars.Last(1);
                 double candleRange = lastBar.High - lastBar.Low;
                 if (candleRange <= 0) candleRange = Symbol.PipSize;
+                double rsiValue = _rsi15M.Result.Last(1);
 
-                // 1H Macro Structure Check
-                double htf1HClose = _bars1H.ClosePrices.Last(1);
-                double htf1HEma = _ema50_1H.Result.Last(1);
-                bool htfBullish = htf1HClose > htf1HEma;
-                bool htfBearish = htf1HClose < htf1HEma;
-
-                // Bearish Sweep: 15M High Swept with Rejection Wick
+                // --- Bearish Exhaustion Sweep (15M High Swept + RSI Overbought) ---
                 if (lastBar.High > recent15MHigh && lastBar.Close < recent15MHigh)
                 {
                     double upperWick = lastBar.High - Math.Max(lastBar.Open, lastBar.Close);
                     double wickRatioPercent = (upperWick / candleRange) * 100.0;
+                    bool rsiExhausted = !RequireRsiExhaustion || (rsiValue >= RsiOverboughtLevel);
 
-                    bool wickValid = !EnableAdaptiveEngine || (wickRatioPercent >= MinWickRejectionPercent);
-                    bool htfValid = !EnableHtfStructureFilter || htfBearish;
-
-                    if (wickValid && htfValid)
+                    if (wickRatioPercent >= MinWickRejectionPercent && rsiExhausted && volumeConfirmed)
                     {
-                        _currentState = BotState.SWEEP_DETECTED_BEARISH;
-                        _sweepLevel = recent15MHigh;
-                        _sweepBarIndex = Bars.Count - 1;
-                        _mssLevel = Bars.LowPrices.Minimum(10);
-                        Print("[Institutional Sweep] 15M High ({0:F5}) Swept | Wick: {1:F1}% | HTF Bearish: {2}", 
-                            _sweepLevel, wickRatioPercent, htfBearish);
+                        double mssLevel = Bars.LowPrices.Minimum(8);
+                        double entryPrice = lastBar.Close;
+                        double stopLossPrice = recent15MHigh + (InvalidationBufferPips * Symbol.PipSize);
+                        double riskPips = Math.Abs(stopLossPrice - entryPrice) / Symbol.PipSize;
+
+                        if (riskPips >= 2.0)
+                        {
+                            double rewardPips = riskPips * RiskRewardRatio;
+                            double takeProfitPrice = entryPrice - (rewardPips * Symbol.PipSize);
+
+                            ExecuteMarketOrderWithProtection(TradeType.Sell, entryPrice, stopLossPrice, takeProfitPrice, riskPips, rewardPips, "Sweep-Reversal");
+                            return;
+                        }
                     }
                 }
-                // Bullish Sweep: 15M Low Swept with Rejection Wick
+                // --- Bullish Exhaustion Sweep (15M Low Swept + RSI Oversold) ---
                 else if (lastBar.Low < recent15MLow && lastBar.Close > recent15MLow)
                 {
                     double lowerWick = Math.Min(lastBar.Open, lastBar.Close) - lastBar.Low;
                     double wickRatioPercent = (lowerWick / candleRange) * 100.0;
+                    bool rsiExhausted = !RequireRsiExhaustion || (rsiValue <= RsiOversoldLevel);
 
-                    bool wickValid = !EnableAdaptiveEngine || (wickRatioPercent >= MinWickRejectionPercent);
-                    bool htfValid = !EnableHtfStructureFilter || htfBullish;
-
-                    if (wickValid && htfValid)
+                    if (wickRatioPercent >= MinWickRejectionPercent && rsiExhausted && volumeConfirmed)
                     {
-                        _currentState = BotState.SWEEP_DETECTED_BULLISH;
-                        _sweepLevel = recent15MLow;
-                        _sweepBarIndex = Bars.Count - 1;
-                        _mssLevel = Bars.HighPrices.Maximum(10);
-                        Print("[Institutional Sweep] 15M Low ({0:F5}) Swept | Wick: {1:F1}% | HTF Bullish: {2}", 
-                            _sweepLevel, wickRatioPercent, htfBullish);
+                        double mssLevel = Bars.HighPrices.Maximum(8);
+                        double entryPrice = lastBar.Close;
+                        double stopLossPrice = recent15MLow - (InvalidationBufferPips * Symbol.PipSize);
+                        double riskPips = Math.Abs(entryPrice - stopLossPrice) / Symbol.PipSize;
+
+                        if (riskPips >= 2.0)
+                        {
+                            double rewardPips = riskPips * RiskRewardRatio;
+                            double takeProfitPrice = entryPrice + (rewardPips * Symbol.PipSize);
+
+                            ExecuteMarketOrderWithProtection(TradeType.Buy, entryPrice, stopLossPrice, takeProfitPrice, riskPips, rewardPips, "Sweep-Reversal");
+                            return;
+                        }
                     }
-                }
-            }
-            // Step B: Check Market Structure Shift (MSS) with Volume & Displacement
-            else if (_currentState == BotState.SWEEP_DETECTED_BEARISH || _currentState == BotState.SWEEP_DETECTED_BULLISH)
-            {
-                double currentAtr = _atr5M.Result.Last(1);
-                double baselineAtr = _atr100M.Result.Last(1);
-                var lastBar = Bars.Last(1);
-                double bodySize = Math.Abs(lastBar.Close - lastBar.Open);
-
-                // 1. Adaptive Volatility Adjustment
-                double volatilityRatio = baselineAtr > 0 ? (currentAtr / baselineAtr) : 1.0;
-                double effectiveDisplacementMult = DisplacementAtrMult;
-                if (EnableAdaptiveEngine)
-                {
-                    if (volatilityRatio < 0.85) effectiveDisplacementMult *= 0.85; // Lower hurdle in compressed market
-                    else if (volatilityRatio > 1.25) effectiveDisplacementMult *= 1.15; // Higher hurdle in explosive market
-                }
-
-                bool isDisplacement = bodySize >= (effectiveDisplacementMult * currentAtr);
-
-                // 2. Relative Volume (RVol) Check
-                bool isVolumeConfirmed = true;
-                if (EnableVolumeFilter)
-                {
-                    double sumVol = 0;
-                    int vLookback = Math.Min(20, Bars.Count - 2);
-                    for (int i = 2; i <= vLookback + 1; i++) sumVol += Bars.TickVolumes.Last(i);
-                    double avgVol = sumVol / vLookback;
-                    double rVol = avgVol > 0 ? (lastBar.TickVolume / avgVol) : 1.0;
-                    isVolumeConfirmed = rVol >= MinRelativeVolume;
-                }
-
-                // --- BEARISH MSS DISPLACEMENT ---
-                if (_currentState == BotState.SWEEP_DETECTED_BEARISH && lastBar.Close < _mssLevel && isDisplacement && isVolumeConfirmed)
-                {
-                    double fvgUpper = Bars.Last(3).Low;
-                    double fvgLower = Bars.Last(1).High;
-
-                    FvgEntryType effectiveEntry = EntryMode;
-                    if (EntryMode == FvgEntryType.Auto_Adaptive)
-                    {
-                        effectiveEntry = volatilityRatio > 1.1 ? FvgEntryType.Midpoint_50 : FvgEntryType.Proximal_Edge;
-                    }
-
-                    if (effectiveEntry == FvgEntryType.Proximal_Edge && fvgUpper > fvgLower)
-                        _fvgEntryLevel = fvgLower;
-                    else if (effectiveEntry == FvgEntryType.Midpoint_50 && fvgUpper > fvgLower)
-                        _fvgEntryLevel = (fvgUpper + fvgLower) / 2.0;
-                    else
-                        _fvgEntryLevel = lastBar.Close;
-
-                    _stopLossPrice = _sweepLevel + (InvalidationBufferPips * Symbol.PipSize);
-                    double riskPips = Math.Abs(_stopLossPrice - _fvgEntryLevel) / Symbol.PipSize;
-                    if (riskPips <= 0) riskPips = 2.0;
-
-                    double effectiveRr = RiskRewardRatio;
-                    if (EnableAdaptiveEngine && volatilityRatio > 1.2) effectiveRr = RiskRewardRatio * 1.15; // Expand RR in trend runs
-
-                    double rewardPips = riskPips * effectiveRr;
-                    _takeProfitPrice = _fvgEntryLevel - (rewardPips * Symbol.PipSize);
-
-                    CancelAllPendingLimitOrders();
-
-                    if (effectiveEntry == FvgEntryType.Market_On_MSS)
-                        ExecuteMarketEntry(TradeType.Sell, lastBar.Close, _stopLossPrice, riskPips, rewardPips);
-                    else
-                        PlaceFvgLimitOrder(TradeType.Sell, _fvgEntryLevel, riskPips, rewardPips);
-                }
-                // --- BULLISH MSS DISPLACEMENT ---
-                else if (_currentState == BotState.SWEEP_DETECTED_BULLISH && lastBar.Close > _mssLevel && isDisplacement && isVolumeConfirmed)
-                {
-                    double fvgLower = Bars.Last(3).High;
-                    double fvgUpper = Bars.Last(1).Low;
-
-                    FvgEntryType effectiveEntry = EntryMode;
-                    if (EntryMode == FvgEntryType.Auto_Adaptive)
-                    {
-                        effectiveEntry = volatilityRatio > 1.1 ? FvgEntryType.Midpoint_50 : FvgEntryType.Proximal_Edge;
-                    }
-
-                    if (effectiveEntry == FvgEntryType.Proximal_Edge && fvgUpper > fvgLower)
-                        _fvgEntryLevel = fvgUpper;
-                    else if (effectiveEntry == FvgEntryType.Midpoint_50 && fvgUpper > fvgLower)
-                        _fvgEntryLevel = (fvgUpper + fvgLower) / 2.0;
-                    else
-                        _fvgEntryLevel = lastBar.Close;
-
-                    _stopLossPrice = _sweepLevel - (InvalidationBufferPips * Symbol.PipSize);
-                    double riskPips = Math.Abs(_fvgEntryLevel - _stopLossPrice) / Symbol.PipSize;
-                    if (riskPips <= 0) riskPips = 2.0;
-
-                    double effectiveRr = RiskRewardRatio;
-                    if (EnableAdaptiveEngine && volatilityRatio > 1.2) effectiveRr = RiskRewardRatio * 1.15;
-
-                    double rewardPips = riskPips * effectiveRr;
-                    _takeProfitPrice = _fvgEntryLevel + (rewardPips * Symbol.PipSize);
-
-                    CancelAllPendingLimitOrders();
-
-                    if (effectiveEntry == FvgEntryType.Market_On_MSS)
-                        ExecuteMarketEntry(TradeType.Buy, lastBar.Close, _stopLossPrice, riskPips, rewardPips);
-                    else
-                        PlaceFvgLimitOrder(TradeType.Buy, _fvgEntryLevel, riskPips, rewardPips);
                 }
             }
         }
@@ -403,29 +413,39 @@ namespace cAlgo.Robots
 
             double currentGainR = currentGainPips / initialRiskPips;
 
-            // 1. One-Time Breakeven Lock at +1.5R with 5-digit broker compliance
+            // Track Extremes for Dynamic Trailing
+            if (position.TradeType == TradeType.Buy)
+            {
+                if (currentPrice > _highestPriceSinceEntry) _highestPriceSinceEntry = currentPrice;
+            }
+            else
+            {
+                if (currentPrice < _lowestPriceSinceEntry) _lowestPriceSinceEntry = currentPrice;
+            }
+
+            // 1. Automatic Breakeven Lock at +1.5R
             if (EnableBreakeven && !_isBreakevenSet && currentGainR >= BreakevenTriggerR)
             {
                 double bePrice = position.TradeType == TradeType.Buy 
                     ? Math.Round(entryPrice + (BreakevenOffsetPips * Symbol.PipSize), Symbol.Digits) 
                     : Math.Round(entryPrice - (BreakevenOffsetPips * Symbol.PipSize), Symbol.Digits);
 
-                bool isSafeDistance = position.TradeType == TradeType.Buy 
+                bool isSafe = position.TradeType == TradeType.Buy 
                     ? (bePrice < Symbol.Bid - (2.0 * Symbol.PipSize)) 
                     : (bePrice > Symbol.Ask + (2.0 * Symbol.PipSize));
 
-                if (isSafeDistance)
+                if (isSafe)
                 {
                     var modifyResult = ModifyPosition(position, bePrice, position.TakeProfit);
                     if (modifyResult.IsSuccessful)
                     {
                         _isBreakevenSet = true;
-                        Print("[Breakeven Locked] Stop Loss moved to {0:F5} (+{1:F1}R reached)", bePrice, currentGainR);
+                        Print("[Breakeven Locked] Stop Loss moved to {0:F5} (+{1:F1}R profit)", bePrice, currentGainR);
                     }
                 }
             }
 
-            // 2. One-Time Partial Take Profit at +3.0R
+            // 2. Partial Take Profit at +2.5R
             if (EnablePartialTp && !_isPartialTpSet && currentGainR >= PartialTpTriggerR)
             {
                 double volumeToClose = position.VolumeInUnits * (PartialTpPercent / 100.0);
@@ -440,10 +460,38 @@ namespace cAlgo.Robots
                     }
                 }
             }
+
+            // 3. Dynamic ATR Chandelier Trailing Stop (Ratchets profits on runners)
+            if (EnableAtrTrailingStop && _isBreakevenSet)
+            {
+                double currentAtr = _atr5M.Result.Last(1);
+                double trailDistance = currentAtr * TrailingAtrMultiplier;
+
+                if (position.TradeType == TradeType.Buy)
+                {
+                    double targetSl = Math.Round(_highestPriceSinceEntry - trailDistance, Symbol.Digits);
+                    if (targetSl > position.StopLoss.Value && targetSl < Symbol.Bid - (2.0 * Symbol.PipSize))
+                    {
+                        ModifyPosition(position, targetSl, position.TakeProfit);
+                        Print("[ATR Trail Ratchet] Buy SL moved up to {0:F5}", targetSl);
+                    }
+                }
+                else
+                {
+                    double targetSl = Math.Round(_lowestPriceSinceEntry + trailDistance, Symbol.Digits);
+                    if (targetSl < position.StopLoss.Value && targetSl > Symbol.Ask + (2.0 * Symbol.PipSize))
+                    {
+                        ModifyPosition(position, targetSl, position.TakeProfit);
+                        Print("[ATR Trail Ratchet] Sell SL moved down to {0:F5}", targetSl);
+                    }
+                }
+            }
         }
 
-        private void PlaceFvgLimitOrder(TradeType tradeType, double targetPrice, double riskPips, double rewardPips)
+        private void PlaceHybridLimitOrder(TradeType tradeType, double entryPrice, double stopLossPrice, double takeProfitPrice, double riskPips, double rewardPips, string setupLabel)
         {
+            CancelAllPendingOrders();
+
             double riskCapital = Account.Balance * (RiskPerTradePercent / 100.0);
             double volumeInUnits = CalculateVolumeUnits(riskCapital, riskPips);
 
@@ -454,31 +502,28 @@ namespace cAlgo.Robots
             }
 
             volumeInUnits = Symbol.NormalizeVolumeInUnits(volumeInUnits, RoundingMode.Down);
-            if (volumeInUnits < Symbol.VolumeInUnitsMin)
-            {
-                volumeInUnits = Symbol.VolumeInUnitsMin;
-            }
+            if (volumeInUnits < Symbol.VolumeInUnitsMin) volumeInUnits = Symbol.VolumeInUnitsMin;
 
-            targetPrice = Math.Round(targetPrice, Symbol.Digits);
-            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, targetPrice, "SweepMssBot", riskPips, rewardPips);
+            entryPrice = Math.Round(entryPrice, Symbol.Digits);
+            stopLossPrice = Math.Round(stopLossPrice, Symbol.Digits);
+            takeProfitPrice = Math.Round(takeProfitPrice, Symbol.Digits);
+
+            var result = PlaceLimitOrder(tradeType, SymbolName, volumeInUnits, entryPrice, "HybridSweepMss", riskPips, rewardPips);
             if (result.IsSuccessful)
             {
-                _currentState = BotState.FVG_ORDER_PENDING;
-                _fvgPendingBarCount = 0;
+                _isPendingOrderActive = true;
+                _pendingBarCounter = 0;
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
-                Print("[Smart Order Placed] {0} Limit at {1:F5} | SL: {2:F5} ({3:F1} pips) | TP: {4:F5} ({5:F1} pips)", 
-                    tradeType, targetPrice, _stopLossPrice, riskPips, _takeProfitPrice, rewardPips);
-            }
-            else
-            {
-                Print("[cBot Order Error] Failed to place limit order: {0}", result.Error);
-                _currentState = BotState.WAITING_FOR_SWEEP;
+                Print("[{0} Order Placed] {1} Limit at {2:F5} | SL: {3:F5} ({4:F1} p) | TP: {5:F5} ({6:F1} p)", 
+                    setupLabel, tradeType, entryPrice, stopLossPrice, riskPips, takeProfitPrice, rewardPips);
             }
         }
 
-        private void ExecuteMarketEntry(TradeType tradeType, double entryPrice, double stopPrice, double riskPips, double rewardPips)
+        private void ExecuteMarketOrderWithProtection(TradeType tradeType, double entryPrice, double stopLossPrice, double takeProfitPrice, double riskPips, double rewardPips, string setupLabel)
         {
+            CancelAllPendingOrders();
+
             double riskCapital = Account.Balance * (RiskPerTradePercent / 100.0);
             double volumeInUnits = CalculateVolumeUnits(riskCapital, riskPips);
 
@@ -489,18 +534,16 @@ namespace cAlgo.Robots
             }
 
             volumeInUnits = Symbol.NormalizeVolumeInUnits(volumeInUnits, RoundingMode.Down);
-            if (volumeInUnits < Symbol.VolumeInUnitsMin)
-            {
-                volumeInUnits = Symbol.VolumeInUnitsMin;
-            }
+            if (volumeInUnits < Symbol.VolumeInUnitsMin) volumeInUnits = Symbol.VolumeInUnitsMin;
 
-            var result = ExecuteMarketOrder(tradeType, SymbolName, volumeInUnits, "SweepMssBot", riskPips, rewardPips);
+            var result = ExecuteMarketOrder(tradeType, SymbolName, volumeInUnits, "HybridSweepMss", riskPips, rewardPips);
             if (result.IsSuccessful)
             {
-                _currentState = BotState.IN_TRADE;
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
-                Print("[Smart Market Entry] {0} at {1:F5} | SL: {2:F5} | TP: {3:F5}", tradeType, entryPrice, stopPrice, _takeProfitPrice);
+                _highestPriceSinceEntry = entryPrice;
+                _lowestPriceSinceEntry = entryPrice;
+                Print("[{0} Market Entry] {1} at {2:F5} | SL: {3:F5} | TP: {4:F5}", setupLabel, tradeType, entryPrice, stopLossPrice, takeProfitPrice);
             }
         }
 
@@ -512,36 +555,21 @@ namespace cAlgo.Robots
             return units;
         }
 
-        private void TriggerCircuitBreaker(double currentDrawdown)
-        {
-            _currentState = BotState.HALTED_CIRCUIT_BREAKER;
-            Print("[CIRCUIT BREAKER] Daily Drawdown {0:F2}% reached limit. Halting robot for today.", currentDrawdown);
-            CancelAllPendingLimitOrders();
-            FlattenAllOpenPositions();
-        }
-
-        private void TriggerEmergencyKill()
-        {
-            _currentState = BotState.EMERGENCY_KILL;
-            Print("[EMERGENCY KILL] Immediate halt requested. Purging orders.");
-            CancelAllPendingLimitOrders();
-            FlattenAllOpenPositions();
-        }
-
-        private void CancelAllPendingLimitOrders()
+        private void CancelAllPendingOrders()
         {
             foreach (var order in PendingOrders)
             {
-                if (order.Label == "SweepMssBot")
+                if (order.Label == "HybridSweepMss")
                     CancelPendingOrder(order);
             }
+            _isPendingOrderActive = false;
         }
 
-        private void FlattenAllOpenPositions()
+        private void CloseAllPositions()
         {
             foreach (var position in Positions)
             {
-                if (position.Label == "SweepMssBot")
+                if (position.Label == "HybridSweepMss")
                     ClosePosition(position);
             }
         }
@@ -552,13 +580,16 @@ namespace cAlgo.Robots
             {
                 if (!System.IO.File.Exists(ConfigFilePath)) return;
                 string json = System.IO.File.ReadAllText(ConfigFilePath);
-                if (json.Contains("\"emergency_kill_active\": true") && _currentState != BotState.EMERGENCY_KILL)
+                if (json.Contains("\"emergency_kill_active\": true") && !_isCircuitHalted)
                 {
-                    TriggerEmergencyKill();
+                    _isCircuitHalted = true;
+                    Print("[EMERGENCY KILL] Immediate halt requested. Purging orders.");
+                    CancelAllPendingOrders();
+                    CloseAllPositions();
                 }
-                else if (json.Contains("\"emergency_kill_active\": false") && _currentState == BotState.EMERGENCY_KILL)
+                else if (json.Contains("\"emergency_kill_active\": false") && _isCircuitHalted)
                 {
-                    _currentState = BotState.WAITING_FOR_SWEEP;
+                    _isCircuitHalted = false;
                     Print("[cBot Resumed] Emergency lock cleared.");
                 }
             }
