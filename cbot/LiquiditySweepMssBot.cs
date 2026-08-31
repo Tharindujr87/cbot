@@ -56,8 +56,14 @@ namespace cAlgo.Robots
         [Parameter("Buy Invalidation Buffer (Pips)", Group = "Strategy 1: BUY Engine", DefaultValue = 4.0, MinValue = 0.5, MaxValue = 10.0)]
         public double BuyInvalidationBufferPips { get; set; }
 
+        [Parameter("Buy Enable Breakeven", Group = "Strategy 1: BUY Engine", DefaultValue = true)]
+        public bool BuyEnableBreakeven { get; set; }
+
         [Parameter("Buy Breakeven Trigger (+R)", Group = "Strategy 1: BUY Engine", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 4.0)]
         public double BuyBreakevenTriggerR { get; set; }
+
+        [Parameter("Buy Enable Partial TP", Group = "Strategy 1: BUY Engine", DefaultValue = true)]
+        public bool BuyEnablePartialTp { get; set; }
 
         [Parameter("Buy Partial TP Trigger (+R)", Group = "Strategy 1: BUY Engine", DefaultValue = 2.5, MinValue = 1.5, MaxValue = 5.0)]
         public double BuyPartialTpTriggerR { get; set; }
@@ -83,8 +89,14 @@ namespace cAlgo.Robots
         [Parameter("Sell Invalidation Buffer (Pips)", Group = "Strategy 2: SELL Engine", DefaultValue = 4.0, MinValue = 0.5, MaxValue = 10.0)]
         public double SellInvalidationBufferPips { get; set; }
 
+        [Parameter("Sell Enable Breakeven", Group = "Strategy 2: SELL Engine", DefaultValue = true)]
+        public bool SellEnableBreakeven { get; set; }
+
         [Parameter("Sell Breakeven Trigger (+R)", Group = "Strategy 2: SELL Engine", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 4.0)]
         public double SellBreakevenTriggerR { get; set; }
+
+        [Parameter("Sell Enable Partial TP", Group = "Strategy 2: SELL Engine", DefaultValue = true)]
+        public bool SellEnablePartialTp { get; set; }
 
         [Parameter("Sell Partial TP Trigger (+R)", Group = "Strategy 2: SELL Engine", DefaultValue = 2.5, MinValue = 1.5, MaxValue = 5.0)]
         public double SellPartialTpTriggerR { get; set; }
@@ -372,14 +384,16 @@ namespace cAlgo.Robots
             }
 
             bool isBuy = position.TradeType == TradeType.Buy;
+            bool enableBreakeven = isBuy ? BuyEnableBreakeven : SellEnableBreakeven;
             double beTriggerR = isBuy ? BuyBreakevenTriggerR : SellBreakevenTriggerR;
+            bool enablePartialTp = isBuy ? BuyEnablePartialTp : SellEnablePartialTp;
             double partialTriggerR = isBuy ? BuyPartialTpTriggerR : SellPartialTpTriggerR;
             double partialPercent = isBuy ? BuyPartialTpPercent : SellPartialTpPercent;
             bool enableTrailing = isBuy ? BuyEnableAtrTrailing : SellEnableAtrTrailing;
             double trailingAtrMult = isBuy ? BuyTrailingAtrMult : SellTrailingAtrMult;
 
             // 1. Asymmetric Breakeven Lock (+1.5R)
-            if (EnableBreakeven && !_isBreakevenSet && currentGainR >= beTriggerR)
+            if (enableBreakeven && !_isBreakevenSet && currentGainR >= beTriggerR)
             {
                 double bePrice = isBuy 
                     ? Math.Round(entryPrice + (0.5 * Symbol.PipSize), Symbol.Digits) 
@@ -401,7 +415,7 @@ namespace cAlgo.Robots
             }
 
             // 2. Asymmetric Partial Take Profit (+2.5R)
-            if (EnablePartialTp && !_isPartialTpSet && currentGainR >= partialTriggerR)
+            if (enablePartialTp && !_isPartialTpSet && currentGainR >= partialTriggerR)
             {
                 double volumeToClose = position.VolumeInUnits * (partialPercent / 100.0);
                 volumeToClose = Symbol.NormalizeVolumeInUnits(volumeToClose, RoundingMode.Down);
