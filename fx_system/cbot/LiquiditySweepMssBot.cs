@@ -117,6 +117,18 @@ namespace cAlgo.Robots
         public double SellTrailingAtrMult { get; set; }
 
         // =========================================================================
+        // TIME-DECAY & STAGNATION EXIT ENGINE (Closes Dragging Trades)
+        // =========================================================================
+        [Parameter("Enable Stagnation Exit", Group = "Stagnation & Time-Decay Exit", DefaultValue = true)]
+        public bool EnableStagnationExit { get; set; }
+
+        [Parameter("Max Stagnant Bars (M5)", Group = "Stagnation & Time-Decay Exit", DefaultValue = 24, MinValue = 10, MaxValue = 100)]
+        public int MaxStagnantBars { get; set; }
+
+        [Parameter("Stagnation Scratch Min Gain (+R)", Group = "Stagnation & Time-Decay Exit", DefaultValue = 0.5, MinValue = 0.1, MaxValue = 2.0)]
+        public double StagnantMinGainR { get; set; }
+
+        // =========================================================================
         // SYSTEM RISK & SPREAD
         // =========================================================================
         [Parameter("Risk Per Trade %", Group = "Risk Controls", DefaultValue = 2.5, MinValue = 0.1, MaxValue = 20.0)]
@@ -141,6 +153,7 @@ namespace cAlgo.Robots
 
         private bool _isPendingOrderActive;
         private int _pendingBarCounter;
+        private int _positionOpenBarCount;
         private double _dailyStartingBalance;
         private int _currentDay;
         private bool _isBreakevenSet;
@@ -154,6 +167,7 @@ namespace cAlgo.Robots
             _dailyStartingBalance = Account.Balance;
             _currentDay = Server.Time.DayOfYear;
             _isPendingOrderActive = false;
+            _positionOpenBarCount = 0;
             _isCircuitHalted = false;
 
             _bars15M = MarketData.GetBars(TimeFrame.Minute15, BotSymbol);
@@ -163,7 +177,7 @@ namespace cAlgo.Robots
             _isBreakevenSet = false;
             _isPartialTpSet = false;
 
-            Print("[Institutional SMC Dual Bot Started] Mode: {0} on {1} ({2})", OrderExecutionMode, BotSymbol, TimeFrame);
+            Print("[Smart-Money Engine with Profit Maximizer Started] Symbol: {0} | Chart: {1}", BotSymbol, TimeFrame);
             CheckHotReloadConfig();
         }
 
@@ -209,6 +223,7 @@ namespace cAlgo.Robots
             {
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
+                _positionOpenBarCount = 0;
                 _highestPriceSinceEntry = double.MinValue;
                 _lowestPriceSinceEntry = double.MaxValue;
             }
@@ -218,7 +233,39 @@ namespace cAlgo.Robots
         {
             if (_isCircuitHalted) return;
 
-            // Manage Pending Order Expiration
+            // 1. Time-Decay & Stagnation Monitor for Active Position
+            var activePosition = Positions.Find("SMC_DualEngine", SymbolName);
+            if (activePosition != null)
+            {
+                _positionOpenBarCount++;
+
+                if (EnableStagnationExit && _positionOpenBarCount >= MaxStagnantBars)
+                {
+                    double entryPrice = activePosition.EntryPrice;
+                    double currentPrice = activePosition.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask;
+                    double initialRiskPips = activePosition.StopLoss.HasValue 
+                        ? Math.Abs(entryPrice - activePosition.StopLoss.Value) / Symbol.PipSize 
+                        : 5.0;
+
+                    double currentGainPips = activePosition.TradeType == TradeType.Buy 
+                        ? (currentPrice - entryPrice) / Symbol.PipSize 
+                        : (entryPrice - currentPrice) / Symbol.PipSize;
+
+                    double currentGainR = initialRiskPips > 0 ? (currentGainPips / initialRiskPips) : 0;
+
+                    // If trade has been dragging for MaxStagnantBars without significant momentum (< StagnantMinGainR)
+                    if (currentGainR < StagnantMinGainR)
+                    {
+                        ClosePosition(activePosition);
+                        Print("[Stagnation Exit] Closed dragging position after {0} bars ({1:F2}R profit) to free capital for fresh setups.", 
+                            _positionOpenBarCount, currentGainR);
+                        _positionOpenBarCount = 0;
+                        return;
+                    }
+                }
+            }
+
+            // 2. Manage Pending Order Expiration
             if (_isPendingOrderActive)
             {
                 _pendingBarCounter++;
@@ -288,7 +335,6 @@ namespace cAlgo.Robots
                 bool isMacroDiscount = lastBar.Close <= equilibrium50;
                 bool isTrendBullish = m15Close > m15TrendEma;
 
-                // Entry is valid if either in Macro Discount OR strong Bullish Trend
                 if (isMacroDiscount || isTrendBullish)
                 {
                     double swingLow = Bars.LowPrices.Minimum(6);
@@ -328,7 +374,6 @@ namespace cAlgo.Robots
                 bool isMacroPremium = lastBar.Close >= equilibrium50;
                 bool isTrendBearish = m15Close < m15TrendEma;
 
-                // Entry is valid if either in Macro Premium OR strong Bearish Trend
                 if (isMacroPremium || isTrendBearish)
                 {
                     double swingHigh = Bars.HighPrices.Maximum(6);
@@ -396,7 +441,7 @@ namespace cAlgo.Robots
             bool enableTrailing = isBuy ? BuyEnableAtrTrailing : SellEnableAtrTrailing;
             double trailingAtrMult = isBuy ? BuyTrailingAtrMult : SellTrailingAtrMult;
 
-            // 1. Asymmetric Breakeven Lock (+1.5R)
+            // 1. Stage 1: Breakeven Lock (+1.5R)
             if (enableBreakeven && !_isBreakevenSet && currentGainR >= beTriggerR)
             {
                 double bePrice = isBuy 
@@ -418,7 +463,7 @@ namespace cAlgo.Robots
                 }
             }
 
-            // 2. Asymmetric Partial Take Profit (+2.5R)
+            // 2. Stage 2: Partial Take Profit (+2.5R) & Secure Profit SL Lock (+1.0R)
             if (enablePartialTp && !_isPartialTpSet && currentGainR >= partialTriggerR)
             {
                 double volumeToClose = position.VolumeInUnits * (partialPercent / 100.0);
@@ -430,15 +475,30 @@ namespace cAlgo.Robots
                     {
                         _isPartialTpSet = true;
                         Print("[Partial TP Banked] Closed {0} units ({1}%) at +{2:F1}R profit.", volumeToClose, partialPercent, currentGainR);
+
+                        // Lock SL at +1.0R guaranteed profit on remaining runner
+                        double securedProfitSl = isBuy 
+                            ? Math.Round(entryPrice + (initialRiskPips * 1.0 * Symbol.PipSize), Symbol.Digits)
+                            : Math.Round(entryPrice - (initialRiskPips * 1.0 * Symbol.PipSize), Symbol.Digits);
+
+                        bool isProfitSlSafe = isBuy ? (securedProfitSl < Symbol.Bid - (2.0 * Symbol.PipSize)) : (securedProfitSl > Symbol.Ask + (2.0 * Symbol.PipSize));
+                        if (isProfitSlSafe)
+                        {
+                            ModifyPosition(position, securedProfitSl, position.TakeProfit);
+                            Print("[Guaranteed Profit Lock] Stop Loss moved into profit at {0:F5} (+1.0R)", securedProfitSl);
+                        }
                     }
                 }
             }
 
-            // 3. Asymmetric ATR Chandelier Trailing Stop for Runners
+            // 3. Stage 3: Accelerating ATR Chandelier Trailing Stop for Max Profit Runners
             if (enableTrailing && _isBreakevenSet)
             {
                 double currentAtr = _atr5M.Result.Last(1);
-                double trailDistance = currentAtr * trailingAtrMult;
+                
+                // Tighten trailing distance as profit expands beyond +3.5R to lock in 80%+ of gains
+                double dynamicMult = currentGainR >= 3.5 ? Math.Max(1.2, trailingAtrMult * 0.75) : trailingAtrMult;
+                double trailDistance = currentAtr * dynamicMult;
 
                 if (isBuy)
                 {
@@ -446,7 +506,7 @@ namespace cAlgo.Robots
                     if (targetSl > position.StopLoss.Value && targetSl < Symbol.Bid - (2.0 * Symbol.PipSize))
                     {
                         ModifyPosition(position, targetSl, position.TakeProfit);
-                        Print("[ATR Trail Ratchet] Buy SL trailed to {0:F5}", targetSl);
+                        Print("[ATR Trail Ratchet] Buy SL trailed to {0:F5} (High: {1:F5})", targetSl, _highestPriceSinceEntry);
                     }
                 }
                 else
@@ -455,7 +515,7 @@ namespace cAlgo.Robots
                     if (targetSl < position.StopLoss.Value && targetSl > Symbol.Ask + (2.0 * Symbol.PipSize))
                     {
                         ModifyPosition(position, targetSl, position.TakeProfit);
-                        Print("[ATR Trail Ratchet] Sell SL trailed to {0:F5}", targetSl);
+                        Print("[ATR Trail Ratchet] Sell SL trailed to {0:F5} (Low: {1:F5})", targetSl, _lowestPriceSinceEntry);
                     }
                 }
             }
@@ -482,6 +542,7 @@ namespace cAlgo.Robots
             {
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
+                _positionOpenBarCount = 0;
                 _highestPriceSinceEntry = entryPrice;
                 _lowestPriceSinceEntry = entryPrice;
                 Print("[{0}] Executed Market {1} at {2:F5} | SL: {3:F5} ({4:F1}p) | TP: {5:F5} ({6:F1}p)", 
@@ -516,6 +577,7 @@ namespace cAlgo.Robots
                 _pendingBarCounter = 0;
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
+                _positionOpenBarCount = 0;
                 Print("[{0}] Placed {1} Limit at {2:F5} | SL: {3:F5} ({4:F1}p) | TP: {5:F5} ({6:F1}p)", 
                     setupLabel, tradeType, entryPrice, stopLossPrice, riskPips, takeProfitPrice, rewardPips);
             }
