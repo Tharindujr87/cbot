@@ -14,6 +14,13 @@ namespace cAlgo.Robots
         Market_On_Confirmed   // Immediate market execution on displacement close
     }
 
+    public enum SessionWindowPreset
+    {
+        Tokyo_London_NewYork, // 00:00 - 17:30 UTC (All peak institutional volume)
+        London_And_NewYork,   // 07:00 - 17:30 UTC
+        Full_24_Hours         // No session time filter
+    }
+
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class InstitutionalFvgLimitBot : Robot
     {
@@ -38,6 +45,9 @@ namespace cAlgo.Robots
         [Parameter("Entry Execution Style", Group = "Dynamic Decision Engine", DefaultValue = ImbalanceEntryStyle.Market_On_Confirmed)]
         public ImbalanceEntryStyle EntryStyle { get; set; }
 
+        [Parameter("Trading Session Window", Group = "Dynamic Decision Engine", DefaultValue = SessionWindowPreset.Tokyo_London_NewYork)]
+        public SessionWindowPreset SessionMode { get; set; }
+
         [Parameter("Enable Macro Trend Filter (50 EMA)", Group = "Dynamic Decision Engine", DefaultValue = true)]
         public bool EnableTrendFilter { get; set; }
 
@@ -60,7 +70,7 @@ namespace cAlgo.Robots
         public bool EnableOrderBlockFallback { get; set; }
 
         // =========================================================================
-        // TRADE PROTECTION & BREAKEVEN
+        // ADVANCED TRADE MANAGEMENT & PROFIT ACCELERATOR
         // =========================================================================
         [Parameter("Enable Breakeven Lock", Group = "Trade Management", DefaultValue = true)]
         public bool EnableBreakeven { get; set; }
@@ -70,6 +80,12 @@ namespace cAlgo.Robots
 
         [Parameter("Breakeven Offset (Pips)", Group = "Trade Management", DefaultValue = 1.0, MinValue = 0.0, MaxValue = 3.0)]
         public double BreakevenOffsetPips { get; set; }
+
+        [Parameter("Enable Dynamic ATR Trailing", Group = "Trade Management", DefaultValue = true)]
+        public bool EnableAtrTrailing { get; set; }
+
+        [Parameter("Trailing ATR Multiplier", Group = "Trade Management", DefaultValue = 2.2, MinValue = 1.0, MaxValue = 4.0)]
+        public double TrailingAtrMult { get; set; }
 
         [Parameter("Enable Partial Take Profit", Group = "Trade Management", DefaultValue = false)]
         public bool EnablePartialTp { get; set; }
@@ -88,6 +104,8 @@ namespace cAlgo.Robots
         private ExponentialMovingAverage _trendEma;
         private bool _isBreakevenSet;
         private bool _isPartialTpSet;
+        private double _highestPriceSinceEntry;
+        private double _lowestPriceSinceEntry;
 
         protected override void OnStart()
         {
@@ -96,8 +114,10 @@ namespace cAlgo.Robots
             _trendEma = Indicators.ExponentialMovingAverage(Bars.ClosePrices, TrendEmaPeriod);
             _isBreakevenSet = false;
             _isPartialTpSet = false;
+            _highestPriceSinceEntry = double.MinValue;
+            _lowestPriceSinceEntry = double.MaxValue;
 
-            Print("[Smart Institutional SMC Bot Started] Symbol: {0} | TimeFrame: {1}", SymbolName, TimeFrame);
+            Print("[Smart Institutional SMC Bot Started] Symbol: {0} | Chart: {1}", SymbolName, TimeFrame);
         }
 
         protected override void OnTick()
@@ -111,12 +131,36 @@ namespace cAlgo.Robots
             {
                 _isBreakevenSet = false;
                 _isPartialTpSet = false;
+                _highestPriceSinceEntry = double.MinValue;
+                _lowestPriceSinceEntry = double.MaxValue;
             }
         }
 
         protected override void OnBar()
         {
             CancelStaleOrders();
+
+            DateTime now = Server.Time;
+
+            // Session Window Filter Check
+            if (SessionMode == SessionWindowPreset.Tokyo_London_NewYork)
+            {
+                // Active from 00:00 UTC to 17:30 UTC
+                if (now.Hour >= 18 && now.Hour <= 23)
+                {
+                    CancelStaleOrders();
+                    return;
+                }
+            }
+            else if (SessionMode == SessionWindowPreset.London_And_NewYork)
+            {
+                // Active from 07:00 UTC to 17:30 UTC
+                if (now.Hour < 7 || now.Hour >= 18)
+                {
+                    CancelStaleOrders();
+                    return;
+                }
+            }
 
             double spreadPips = (Symbol.Ask - Symbol.Bid) / _pipSize;
             if (spreadPips > MaxSpreadPips) return;
@@ -288,6 +332,16 @@ namespace cAlgo.Robots
 
             double currentGainR = currentGainPips / initialRiskPips;
 
+            // Track Extremes for Dynamic ATR Trailing
+            if (position.TradeType == TradeType.Buy)
+            {
+                if (currentPrice > _highestPriceSinceEntry) _highestPriceSinceEntry = currentPrice;
+            }
+            else
+            {
+                if (currentPrice < _lowestPriceSinceEntry) _lowestPriceSinceEntry = currentPrice;
+            }
+
             // 1. One-Time Breakeven Lock (+1.5R)
             if (EnableBreakeven && !_isBreakevenSet && currentGainR >= BreakevenTriggerR)
             {
@@ -325,6 +379,32 @@ namespace cAlgo.Robots
                     }
                 }
             }
+
+            // 3. Dynamic ATR Chandelier Trailing Stop on Big Expansion Legs
+            if (EnableAtrTrailing && _isBreakevenSet && currentGainR >= 2.0)
+            {
+                double currentAtr = _atr.Result.Last(1);
+                double trailDistance = currentAtr * TrailingAtrMult;
+
+                if (position.TradeType == TradeType.Buy)
+                {
+                    double targetSl = Math.Round(_highestPriceSinceEntry - trailDistance, Symbol.Digits);
+                    if (targetSl > position.StopLoss.Value && targetSl < Symbol.Bid - (2.0 * _pipSize))
+                    {
+                        ModifyPosition(position, targetSl, position.TakeProfit);
+                        Print("[ATR Trail Ratchet] Buy SL trailed to {0:F5}", targetSl);
+                    }
+                }
+                else
+                {
+                    double targetSl = Math.Round(_lowestPriceSinceEntry + trailDistance, Symbol.Digits);
+                    if (targetSl < position.StopLoss.Value && targetSl > Symbol.Ask + (2.0 * _pipSize))
+                    {
+                        ModifyPosition(position, targetSl, position.TakeProfit);
+                        Print("[ATR Trail Ratchet] Sell SL trailed to {0:F5}", targetSl);
+                    }
+                }
+            }
         }
 
         private void ExecuteOrPlaceOrder(TradeType tradeType, double targetPrice, double sl, double tp)
@@ -350,7 +430,6 @@ namespace cAlgo.Robots
             volume = Symbol.NormalizeVolumeInUnits(volume, RoundingMode.Down);
             if (volume < Symbol.VolumeInUnitsMin) volume = Symbol.VolumeInUnitsMin;
 
-            // Final safety: check if minimum volume fits in free margin
             if (Symbol.GetEstimatedMargin(tradeType, volume) > Account.FreeMargin)
             {
                 Print("[Margin Warning] Insufficient margin for minimum lot size on {0}", SymbolName);
@@ -368,6 +447,8 @@ namespace cAlgo.Robots
                 {
                     _isBreakevenSet = false;
                     _isPartialTpSet = false;
+                    _highestPriceSinceEntry = targetPrice;
+                    _lowestPriceSinceEntry = targetPrice;
                     Print("[Market Executed] {0} at {1:F5} | SL: {2:F5} ({3:F1}p) | TP: {4:F5} ({5:F1}p)", 
                         tradeType, targetPrice, sl, slPips, tp, tpPips);
                 }
