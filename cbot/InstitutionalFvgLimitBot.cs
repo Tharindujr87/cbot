@@ -10,7 +10,7 @@ namespace cAlgo.Robots
     public enum ImbalanceEntryStyle
     {
         Midpoint_50,          // 50% Consequent Encroachment (Highest R:R)
-        Proximal_Edge,        // Imbalance boundary edge (Highest fill rate)
+        Proximal_Edge,        // Imbalance boundary edge (High fill rate)
         Market_On_Confirmed   // Immediate market execution on displacement close
     }
 
@@ -20,34 +20,40 @@ namespace cAlgo.Robots
         // =========================================================================
         // RISK & SPREAD CONTROLS
         // =========================================================================
-        [Parameter("Risk % of Balance", Group = "Risk Controls", DefaultValue = 1.0, MinValue = 0.1, MaxValue = 5.0)]
+        [Parameter("Risk % of Balance", Group = "Risk Controls", DefaultValue = 2.0, MinValue = 0.1, MaxValue = 5.0)]
         public double RiskPercentage { get; set; }
 
-        [Parameter("Risk-Reward Ratio", Group = "Risk Controls", DefaultValue = 2.5, MinValue = 1.5, MaxValue = 8.0)]
+        [Parameter("Risk-Reward Ratio", Group = "Risk Controls", DefaultValue = 3.5, MinValue = 1.5, MaxValue = 8.0)]
         public double RiskReward { get; set; }
 
         [Parameter("Max Spread (Pips)", Group = "Risk Controls", DefaultValue = 2.5, MinValue = 0.5, MaxValue = 6.0)]
         public double MaxSpreadPips { get; set; }
 
-        [Parameter("Cancel Pending Order (Bars)", Group = "Risk Controls", DefaultValue = 6, MinValue = 1, MaxValue = 20)]
+        [Parameter("Cancel Pending Order (Bars)", Group = "Risk Controls", DefaultValue = 4, MinValue = 1, MaxValue = 20)]
         public int OrderExpiryBars { get; set; }
 
         // =========================================================================
         // DYNAMIC SMC & IMBALANCE ENGINE
         // =========================================================================
-        [Parameter("Entry Execution Style", Group = "Dynamic Decision Engine", DefaultValue = ImbalanceEntryStyle.Proximal_Edge)]
+        [Parameter("Entry Execution Style", Group = "Dynamic Decision Engine", DefaultValue = ImbalanceEntryStyle.Market_On_Confirmed)]
         public ImbalanceEntryStyle EntryStyle { get; set; }
 
-        [Parameter("Swing Liquidity Lookback", Group = "Dynamic Decision Engine", DefaultValue = 20, MinValue = 8, MaxValue = 50)]
+        [Parameter("Enable Macro Trend Filter (50 EMA)", Group = "Dynamic Decision Engine", DefaultValue = true)]
+        public bool EnableTrendFilter { get; set; }
+
+        [Parameter("Trend EMA Period", Group = "Dynamic Decision Engine", DefaultValue = 50, MinValue = 10, MaxValue = 200)]
+        public int TrendEmaPeriod { get; set; }
+
+        [Parameter("Swing Liquidity Lookback", Group = "Dynamic Decision Engine", DefaultValue = 16, MinValue = 8, MaxValue = 50)]
         public int SwingLookback { get; set; }
 
         [Parameter("Sweep Detection Window (Bars)", Group = "Dynamic Decision Engine", DefaultValue = 3, MinValue = 1, MaxValue = 6)]
         public int SweepWindowBars { get; set; }
 
-        [Parameter("Displacement Multiplier", Group = "Dynamic Decision Engine", DefaultValue = 1.25, MinValue = 1.0, MaxValue = 2.5)]
+        [Parameter("Displacement Multiplier", Group = "Dynamic Decision Engine", DefaultValue = 1.20, MinValue = 0.8, MaxValue = 2.5)]
         public double VolMultiplier { get; set; }
 
-        [Parameter("Min Imbalance (Pips)", Group = "Dynamic Decision Engine", DefaultValue = 2.0, MinValue = 0.5, MaxValue = 10.0)]
+        [Parameter("Min Imbalance (Pips)", Group = "Dynamic Decision Engine", DefaultValue = 2.5, MinValue = 0.5, MaxValue = 10.0)]
         public double MinFvgPips { get; set; }
 
         [Parameter("Enable OrderBlock Retest Fallback", Group = "Dynamic Decision Engine", DefaultValue = true)]
@@ -59,32 +65,43 @@ namespace cAlgo.Robots
         [Parameter("Enable Breakeven Lock", Group = "Trade Management", DefaultValue = true)]
         public bool EnableBreakeven { get; set; }
 
-        [Parameter("Breakeven Trigger (+R)", Group = "Trade Management", DefaultValue = 1.2, MinValue = 0.5, MaxValue = 3.0)]
+        [Parameter("Breakeven Trigger (+R)", Group = "Trade Management", DefaultValue = 1.5, MinValue = 0.5, MaxValue = 4.0)]
         public double BreakevenTriggerR { get; set; }
 
-        [Parameter("Breakeven Offset (Pips)", Group = "Trade Management", DefaultValue = 0.5, MinValue = 0.0, MaxValue = 3.0)]
+        [Parameter("Breakeven Offset (Pips)", Group = "Trade Management", DefaultValue = 1.0, MinValue = 0.0, MaxValue = 3.0)]
         public double BreakevenOffsetPips { get; set; }
 
-        [Parameter("Bot Label", Group = "System", DefaultValue = "Dynamic_SMC_Bot")]
+        [Parameter("Enable Partial Take Profit", Group = "Trade Management", DefaultValue = false)]
+        public bool EnablePartialTp { get; set; }
+
+        [Parameter("Partial TP Trigger (+R)", Group = "Trade Management", DefaultValue = 2.5, MinValue = 1.0, MaxValue = 5.0)]
+        public double PartialTpTriggerR { get; set; }
+
+        [Parameter("Partial TP Volume %", Group = "Trade Management", DefaultValue = 50.0, MinValue = 10.0, MaxValue = 90.0)]
+        public double PartialTpPercent { get; set; }
+
+        [Parameter("Bot Label", Group = "System", DefaultValue = "InstSMC_GBPJPY")]
         public string BotLabel { get; set; }
 
         private double _pipSize;
         private AverageTrueRange _atr;
+        private ExponentialMovingAverage _trendEma;
         private bool _isBreakevenSet;
+        private bool _isPartialTpSet;
 
         protected override void OnStart()
         {
             _pipSize = Symbol.PipSize;
             _atr = Indicators.AverageTrueRange(Bars, 14, MovingAverageType.Simple);
+            _trendEma = Indicators.ExponentialMovingAverage(Bars.ClosePrices, TrendEmaPeriod);
             _isBreakevenSet = false;
+            _isPartialTpSet = false;
 
-            Print("[Dynamic Institutional SMC Bot Started] Symbol: {0} | Chart: {1} | Style: {2}", 
-                SymbolName, TimeFrame, EntryStyle);
+            Print("[Smart Institutional SMC Bot Started] Symbol: {0} | TimeFrame: {1}", SymbolName, TimeFrame);
         }
 
         protected override void OnTick()
         {
-            // Active Position Protection
             var activePosition = Positions.Find(BotLabel, SymbolName);
             if (activePosition != null)
             {
@@ -93,28 +110,30 @@ namespace cAlgo.Robots
             else
             {
                 _isBreakevenSet = false;
+                _isPartialTpSet = false;
             }
         }
 
         protected override void OnBar()
         {
-            // 1. Clean up stale unmitigated pending orders
             CancelStaleOrders();
 
             double spreadPips = (Symbol.Ask - Symbol.Bid) / _pipSize;
             if (spreadPips > MaxSpreadPips) return;
 
-            // Only allow 1 trade or pending order at a time
+            // Strict single position rule
             if (Positions.FindAll(BotLabel, SymbolName).Length > 0 || PendingOrders.Any(o => o.Label == BotLabel && o.SymbolName == SymbolName))
                 return;
 
-            if (Bars.Count < SwingLookback + 15) return;
+            if (Bars.Count < Math.Max(SwingLookback + 15, TrendEmaPeriod + 5)) return;
 
             int i = 1; // Completed bar index
             double currentAtr = _atr.Result.Last(1);
+            double currentEma = _trendEma.Result.Last(1);
+            double closePrice = Bars.ClosePrices.Last(i);
 
             // =========================================================================
-            // 1. DYNAMIC SWING HIGH & LOW CALCULATION
+            // 1. DYNAMIC SWING HIGH & LOW LIQUIDITY CALCULATION
             // =========================================================================
             double swingHigh = double.MinValue;
             double swingLow = double.MaxValue;
@@ -136,7 +155,7 @@ namespace cAlgo.Robots
             double avgBody = totalBody / 10.0;
 
             // =========================================================================
-            // 3. MULTI-BAR FLEXIBLE LIQUIDITY SWEEP DETECTION
+            // 3. MULTI-BAR LIQUIDITY SWEEP DETECTION
             // =========================================================================
             bool sweptSellSide = false;
             double lowestSweepPrice = double.MaxValue;
@@ -165,18 +184,20 @@ namespace cAlgo.Robots
             // Displacement Requirements (Body size or ATR expansion)
             double lastBody = Math.Abs(Bars.ClosePrices.Last(i) - Bars.OpenPrices.Last(i));
             bool isBullishDisplacement = (Bars.ClosePrices.Last(i) > Bars.OpenPrices.Last(i)) &&
-                                        (lastBody >= (avgBody * VolMultiplier) || lastBody >= (0.50 * currentAtr));
+                                        (lastBody >= (avgBody * VolMultiplier) || lastBody >= (0.45 * currentAtr));
 
             bool isBearishDisplacement = (Bars.ClosePrices.Last(i) < Bars.OpenPrices.Last(i)) &&
-                                        (lastBody >= (avgBody * VolMultiplier) || lastBody >= (0.50 * currentAtr));
+                                        (lastBody >= (avgBody * VolMultiplier) || lastBody >= (0.45 * currentAtr));
 
-            // Dynamic Imbalance Gap (adapts to volatility)
+            // Dynamic Imbalance Gap (adapts to GBPJPY volatility)
             double dynamicMinGap = Math.Max(MinFvgPips * _pipSize, currentAtr * 0.20);
 
             // =========================================================================
             // 4. BULLISH OPPORTUNITY DECISION
             // =========================================================================
-            if (sweptSellSide && isBullishDisplacement && Bars.ClosePrices.Last(i) > swingLow)
+            bool isUptrend = !EnableTrendFilter || (closePrice > currentEma);
+
+            if (sweptSellSide && isBullishDisplacement && Bars.ClosePrices.Last(i) > swingLow && isUptrend)
             {
                 double bullishFvgGap = Bars.LowPrices.Last(i) - Bars.HighPrices.Last(i + 2);
                 bool hasBullishFvg = bullishFvgGap >= dynamicMinGap;
@@ -185,15 +206,14 @@ namespace cAlgo.Robots
                 if (hasBullishFvg)
                 {
                     if (EntryStyle == ImbalanceEntryStyle.Proximal_Edge)
-                        entryPrice = Bars.LowPrices.Last(i); // Boundary
+                        entryPrice = Bars.LowPrices.Last(i);
                     else if (EntryStyle == ImbalanceEntryStyle.Midpoint_50)
-                        entryPrice = Bars.HighPrices.Last(i + 2) + (bullishFvgGap / 2.0); // 50% Consequent Encroachment
+                        entryPrice = Bars.HighPrices.Last(i + 2) + (bullishFvgGap / 2.0);
                     else
                         entryPrice = Bars.ClosePrices.Last(i);
                 }
                 else if (EnableOrderBlockFallback)
                 {
-                    // Fallback: 50% retracement of the displacement candle
                     entryPrice = (Bars.LowPrices.Last(i) + Bars.ClosePrices.Last(i)) / 2.0;
                 }
                 else
@@ -201,10 +221,10 @@ namespace cAlgo.Robots
                     return;
                 }
 
-                double stopLoss = lowestSweepPrice - (1.5 * _pipSize);
+                double stopLoss = lowestSweepPrice - (2.0 * _pipSize);
                 double risk = entryPrice - stopLoss;
 
-                if (risk >= (2.5 * _pipSize))
+                if (risk >= (3.0 * _pipSize))
                 {
                     double takeProfit = entryPrice + (risk * RiskReward);
                     ExecuteOrPlaceOrder(TradeType.Buy, entryPrice, stopLoss, takeProfit);
@@ -215,7 +235,9 @@ namespace cAlgo.Robots
             // =========================================================================
             // 5. BEARISH OPPORTUNITY DECISION
             // =========================================================================
-            if (sweptBuySide && isBearishDisplacement && Bars.ClosePrices.Last(i) < swingHigh)
+            bool isDowntrend = !EnableTrendFilter || (closePrice < currentEma);
+
+            if (sweptBuySide && isBearishDisplacement && Bars.ClosePrices.Last(i) < swingHigh && isDowntrend)
             {
                 double bearishFvgGap = Bars.LowPrices.Last(i + 2) - Bars.HighPrices.Last(i);
                 bool hasBearishFvg = bearishFvgGap >= dynamicMinGap;
@@ -224,15 +246,14 @@ namespace cAlgo.Robots
                 if (hasBearishFvg)
                 {
                     if (EntryStyle == ImbalanceEntryStyle.Proximal_Edge)
-                        entryPrice = Bars.HighPrices.Last(i); // Boundary
+                        entryPrice = Bars.HighPrices.Last(i);
                     else if (EntryStyle == ImbalanceEntryStyle.Midpoint_50)
-                        entryPrice = Bars.HighPrices.Last(i) + (bearishFvgGap / 2.0); // 50% Consequent Encroachment
+                        entryPrice = Bars.HighPrices.Last(i) + (bearishFvgGap / 2.0);
                     else
                         entryPrice = Bars.ClosePrices.Last(i);
                 }
                 else if (EnableOrderBlockFallback)
                 {
-                    // Fallback: 50% retracement of the displacement candle
                     entryPrice = (Bars.HighPrices.Last(i) + Bars.ClosePrices.Last(i)) / 2.0;
                 }
                 else
@@ -240,10 +261,10 @@ namespace cAlgo.Robots
                     return;
                 }
 
-                double stopLoss = highestSweepPrice + (1.5 * _pipSize);
+                double stopLoss = highestSweepPrice + (2.0 * _pipSize);
                 double risk = stopLoss - entryPrice;
 
-                if (risk >= (2.5 * _pipSize))
+                if (risk >= (3.0 * _pipSize))
                 {
                     double takeProfit = entryPrice - (risk * RiskReward);
                     ExecuteOrPlaceOrder(TradeType.Sell, entryPrice, stopLoss, takeProfit);
@@ -267,7 +288,7 @@ namespace cAlgo.Robots
 
             double currentGainR = currentGainPips / initialRiskPips;
 
-            // One-Time Breakeven Lock (+1.2R)
+            // 1. One-Time Breakeven Lock (+1.5R)
             if (EnableBreakeven && !_isBreakevenSet && currentGainR >= BreakevenTriggerR)
             {
                 double bePrice = position.TradeType == TradeType.Buy 
@@ -288,6 +309,22 @@ namespace cAlgo.Robots
                     }
                 }
             }
+
+            // 2. Optional Partial Take Profit (+2.5R)
+            if (EnablePartialTp && !_isPartialTpSet && currentGainR >= PartialTpTriggerR)
+            {
+                double volumeToClose = position.VolumeInUnits * (PartialTpPercent / 100.0);
+                volumeToClose = Symbol.NormalizeVolumeInUnits(volumeToClose, RoundingMode.Down);
+                if (volumeToClose >= Symbol.VolumeInUnitsMin && volumeToClose < position.VolumeInUnits)
+                {
+                    var closeResult = ClosePosition(position, volumeToClose);
+                    if (closeResult.IsSuccessful)
+                    {
+                        _isPartialTpSet = true;
+                        Print("[Partial TP Banked] Closed {0} units ({1}%) at +{2:F1}R profit.", volumeToClose, PartialTpPercent, currentGainR);
+                    }
+                }
+            }
         }
 
         private void ExecuteOrPlaceOrder(TradeType tradeType, double targetPrice, double sl, double tp)
@@ -298,18 +335,27 @@ namespace cAlgo.Robots
 
             if (slPips <= 0) return;
 
-            // Dynamic volume sizing with 85% free margin buffer
+            // Pip value conversion
             double pipValue = Symbol.PipValue;
             double volume = (slPips > 0 && pipValue > 0) ? (riskAmount / (slPips * pipValue)) : Symbol.VolumeInUnitsMin;
 
-            double requiredMargin = volume / 30.0;
-            if (requiredMargin > (Account.FreeMargin * 0.85))
+            // Robust broker-accurate Margin Calculation
+            double maxAllowedMargin = Account.FreeMargin * 0.80;
+            double estimatedMargin = Symbol.GetEstimatedMargin(tradeType, volume);
+            if (estimatedMargin > maxAllowedMargin && estimatedMargin > 0)
             {
-                volume = (Account.FreeMargin * 0.85) * 30.0;
+                volume = volume * (maxAllowedMargin / estimatedMargin);
             }
 
             volume = Symbol.NormalizeVolumeInUnits(volume, RoundingMode.Down);
             if (volume < Symbol.VolumeInUnitsMin) volume = Symbol.VolumeInUnitsMin;
+
+            // Final safety: check if minimum volume fits in free margin
+            if (Symbol.GetEstimatedMargin(tradeType, volume) > Account.FreeMargin)
+            {
+                Print("[Margin Warning] Insufficient margin for minimum lot size on {0}", SymbolName);
+                return;
+            }
 
             targetPrice = Math.Round(targetPrice, Symbol.Digits);
             sl = Math.Round(sl, Symbol.Digits);
@@ -321,6 +367,7 @@ namespace cAlgo.Robots
                 if (marketResult.IsSuccessful)
                 {
                     _isBreakevenSet = false;
+                    _isPartialTpSet = false;
                     Print("[Market Executed] {0} at {1:F5} | SL: {2:F5} ({3:F1}p) | TP: {4:F5} ({5:F1}p)", 
                         tradeType, targetPrice, sl, slPips, tp, tpPips);
                 }
@@ -332,6 +379,7 @@ namespace cAlgo.Robots
                 if (limitResult.IsSuccessful)
                 {
                     _isBreakevenSet = false;
+                    _isPartialTpSet = false;
                     Print("[Limit Placed ({0})] {1} at {2:F5} | SL: {3:F5} ({4:F1}p) | TP: {5:F5} ({6:F1}p)", 
                         EntryStyle, tradeType, targetPrice, sl, slPips, tp, tpPips);
                 }
@@ -365,7 +413,7 @@ namespace cAlgo.Robots
             if (tf == TimeFrame.Hour) return 60;
             if (tf == TimeFrame.Hour4) return 240;
             if (tf == TimeFrame.Daily) return 1440;
-            return 5;
+            return 15;
         }
     }
 }
