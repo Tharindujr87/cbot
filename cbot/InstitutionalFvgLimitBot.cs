@@ -225,13 +225,16 @@ namespace cAlgo.Robots
                 }
             }
 
-            // Displacement Requirements (Body size or ATR expansion)
-            double lastBody = Math.Abs(Bars.ClosePrices.Last(i) - Bars.OpenPrices.Last(i));
-            bool isBullishDisplacement = (Bars.ClosePrices.Last(i) > Bars.OpenPrices.Last(i)) &&
-                                        (lastBody >= (avgBody * VolMultiplier) || lastBody >= (0.45 * currentAtr));
+            // Displacement Requirements (Checks closed bar or preceding impulse bar for institutional volume expansion)
+            double bodyBar1 = Math.Abs(Bars.ClosePrices.Last(i) - Bars.OpenPrices.Last(i));
+            double bodyBar2 = Math.Abs(Bars.ClosePrices.Last(i + 1) - Bars.OpenPrices.Last(i + 1));
+            double displacementThreshold = Math.Max(avgBody * VolMultiplier, 0.40 * currentAtr);
 
-            bool isBearishDisplacement = (Bars.ClosePrices.Last(i) < Bars.OpenPrices.Last(i)) &&
-                                        (lastBody >= (avgBody * VolMultiplier) || lastBody >= (0.45 * currentAtr));
+            bool isBullishDisplacement = (Bars.ClosePrices.Last(i) > Bars.OpenPrices.Last(i) && bodyBar1 >= displacementThreshold) ||
+                                         (Bars.ClosePrices.Last(i + 1) > Bars.OpenPrices.Last(i + 1) && bodyBar2 >= displacementThreshold);
+
+            bool isBearishDisplacement = (Bars.ClosePrices.Last(i) < Bars.OpenPrices.Last(i) && bodyBar1 >= displacementThreshold) ||
+                                         (Bars.ClosePrices.Last(i + 1) < Bars.OpenPrices.Last(i + 1) && bodyBar2 >= displacementThreshold);
 
             // Dynamic Imbalance Gap (adapts to GBPJPY volatility)
             double dynamicMinGap = Math.Max(MinFvgPips * _pipSize, currentAtr * 0.20);
