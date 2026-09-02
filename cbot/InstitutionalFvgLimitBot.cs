@@ -27,6 +27,9 @@ namespace cAlgo.Robots
         [Parameter("Cancel Pending Order After (Bars)", DefaultValue = 4, MinValue = 1, MaxValue = 15)]
         public int OrderExpiryBars { get; set; }
 
+        [Parameter("Max Spread (Pips)", DefaultValue = 2.5, MinValue = 0.5, MaxValue = 6.0)]
+        public double MaxSpreadPips { get; set; }
+
         [Parameter("Label", DefaultValue = "InstScalp_50FVG")]
         public string BotLabel { get; set; }
 
@@ -42,6 +45,9 @@ namespace cAlgo.Robots
         {
             // Clean up expired pending orders that were never mitigated
             CancelStaleOrders();
+
+            double spreadPips = (Symbol.Ask - Symbol.Bid) / _pipSize;
+            if (spreadPips > MaxSpreadPips) return;
 
             // Only allow 1 active position or pending order at a time on small accounts
             if (Positions.FindAll(BotLabel, SymbolName).Length > 0 || PendingOrders.Any(o => o.Label == BotLabel && o.SymbolName == SymbolName))
