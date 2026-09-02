@@ -44,7 +44,7 @@ namespace cAlgo.Robots
             CancelStaleOrders();
 
             // Only allow 1 active position or pending order at a time on small accounts
-            if (Positions.FindAll(BotLabel, SymbolName).Length > 0 || PendingOrders.FindAll(BotLabel, SymbolName).Length > 0)
+            if (Positions.FindAll(BotLabel, SymbolName).Length > 0 || PendingOrders.Any(o => o.Label == BotLabel && o.SymbolName == SymbolName))
                 return;
 
             if (Bars.Count < SwingLookback + 15) return;
@@ -154,7 +154,7 @@ namespace cAlgo.Robots
 
         private void CancelStaleOrders()
         {
-            var pending = PendingOrders.FindAll(BotLabel, SymbolName);
+            var pending = PendingOrders.Where(o => o.Label == BotLabel && o.SymbolName == SymbolName).ToArray();
             foreach (var order in pending)
             {
                 if (order.ExpirationTime.HasValue && Server.Time >= order.ExpirationTime.Value)
